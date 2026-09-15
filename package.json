@@ -1,0 +1,40 @@
+{
+  "name": "@tertium/loki",
+  "version": "0.1.0",
+  "description": "Terminal chat CLI for local Ollama models — Claude-Code-CLI style, Node/TypeScript, no Python",
+  "author": "Vitalii Balabanov",
+  "email": "tertiumnon@gmail.com",
+  "main": "bin/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node bin/index.js",
+    "prepublishOnly": "npm run build"
+  },
+  "bin": {
+    "loki": "./bin/index.js"
+  },
+  "files": [
+    "bin",
+    "package.json"
+  ],
+  "keywords": [
+    "cli",
+    "ollama",
+    "llm",
+    "chat",
+    "local-ai"
+  ],
+  "engines": {
+    "node": ">=18.17"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.6.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Tertiumnon/tertium-loki.git"
+  },
+  "license": "MIT"
+}
