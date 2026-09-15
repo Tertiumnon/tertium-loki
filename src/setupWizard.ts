@@ -11,7 +11,7 @@ import {
 } from "./modelSuggest.js";
 import { saveConfig, getConfigPath, type AgentProfile, type Config } from "./config.js";
 
-type Readline = ReturnType<typeof createInterface>;
+export type Readline = ReturnType<typeof createInterface>;
 
 async function ask(rl: Readline, question: string, fallback = ""): Promise<string> {
   const answer = (await rl.question(question)).trim();
@@ -33,8 +33,8 @@ async function addCustomProfile(rl: Readline, models: ModelInfo[], agents: Agent
   agents.push({ name, model: model.name, ...(systemPrompt ? { systemPrompt } : {}) });
 }
 
-export async function runSetupWizard(): Promise<Config> {
-  const rl = createInterface({ input: stdin, output: stdout });
+export async function runSetupWizard(existingRl?: Readline): Promise<Config> {
+  const rl = existingRl ?? createInterface({ input: stdin, output: stdout });
 
   console.log("loki setup\n");
 
@@ -127,6 +127,6 @@ export async function runSetupWizard(): Promise<Config> {
 
     return config;
   } finally {
-    rl.close();
+    if (!existingRl) rl.close();
   }
 }

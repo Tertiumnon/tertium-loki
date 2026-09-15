@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { chatStream, listModels } from "./ollamaClient.js";
+import { runSetupWizard } from "./setupWizard.js";
 const RESET = "\x1b[0m";
 const GRAY = "\x1b[90m";
 const BLUE = "\x1b[94m";
@@ -11,6 +12,7 @@ function printHelp(config) {
     console.log("  /which          show active profile");
     console.log("  /models         list models available on the Ollama server");
     console.log("  /reset          clear conversation history");
+    console.log("  /init, /config  re-run setup (rescans models, rebuild profiles)");
     console.log("  /help           show this help");
     console.log("  /exit, /quit    leave chat");
 }
@@ -45,6 +47,14 @@ export async function runChatLoop(config) {
             if (userInput === "/reset") {
                 messages = [];
                 console.log("Conversation history cleared.");
+                continue;
+            }
+            if (userInput === "/init" || userInput === "/config") {
+                console.log();
+                config = await runSetupWizard(rl);
+                agent = config.agents.find((a) => a.name === config.defaultAgent) ?? config.agents[0];
+                messages = [];
+                console.log(`Active profile: ${agent.name} (${agent.model})\n`);
                 continue;
             }
             if (userInput === "/models") {

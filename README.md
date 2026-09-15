@@ -135,6 +135,7 @@ You (coder): /exit
 | `/which` | show the active profile |
 | `/models` | list models available on the Ollama server |
 | `/reset` | clear conversation history |
+| `/init`, `/config` | re-run setup without leaving chat (rescans models, rebuilds profiles) |
 | `/help` | show commands |
 | `/exit`, `/quit` | leave chat |
 

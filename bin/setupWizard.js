@@ -20,8 +20,8 @@ async function addCustomProfile(rl, models, agents) {
     const systemPrompt = await ask(rl, `System prompt (optional, Enter to skip): `, "");
     agents.push({ name, model: model.name, ...(systemPrompt ? { systemPrompt } : {}) });
 }
-export async function runSetupWizard() {
-    const rl = createInterface({ input: stdin, output: stdout });
+export async function runSetupWizard(existingRl) {
+    const rl = existingRl ?? createInterface({ input: stdin, output: stdout });
     console.log("loki setup\n");
     try {
         const baseUrl = await ask(rl, `Ollama base URL [http://localhost:11434]: `, "http://localhost:11434");
@@ -95,6 +95,7 @@ export async function runSetupWizard() {
         return config;
     }
     finally {
-        rl.close();
+        if (!existingRl)
+            rl.close();
     }
 }
