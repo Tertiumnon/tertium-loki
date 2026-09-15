@@ -11,7 +11,9 @@
     "start": "node bin/index.js",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "bun run build",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "prepublishOnly": "bun run typecheck && bun run test && bun run build",
     "release:patch": "bun node_modules/@tertium/js/scripts/release.js patch",
     "release:minor": "bun node_modules/@tertium/js/scripts/release.js minor",
     "release:major": "bun node_modules/@tertium/js/scripts/release.js major"
@@ -37,6 +39,7 @@
     "@tertium/js": "^2.7.3"
   },
   "devDependencies": {
+    "@biomejs/biome": "^2.5.13",
     "@types/bun": "^1.4.2",
     "@types/node": "^24.0.0",
     "typescript": "^5.6.0"

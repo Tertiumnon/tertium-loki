@@ -25,5 +25,5 @@ export async function loadConfig(configDir: string = defaultConfigDir()): Promis
 
 export async function saveConfig(config: Config, configDir: string = defaultConfigDir()): Promise<void> {
   await mkdir(configDir, { recursive: true });
-  await writeFile(getConfigPath(configDir), JSON.stringify(config, null, 2) + "\n", "utf-8");
+  await writeFile(getConfigPath(configDir), `${JSON.stringify(config, null, 2)}\n`, "utf-8");
 }

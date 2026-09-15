@@ -47,7 +47,8 @@ describe("listModelsDetailed", () => {
   });
 
   test("throws with the status on a non-ok response", async () => {
-    globalThis.fetch = (async () => new Response("", { status: 500, statusText: "Internal Error" })) as unknown as typeof fetch;
+    globalThis.fetch = (async () =>
+      new Response("", { status: 500, statusText: "Internal Error" })) as unknown as typeof fetch;
     await expect(listModelsDetailed("http://localhost:11434")).rejects.toThrow("500");
   });
 });
@@ -73,12 +74,14 @@ describe("chatStream", () => {
   });
 
   test("throws on an in-stream error chunk", async () => {
-    globalThis.fetch = (async () => ndjsonResponse([JSON.stringify({ error: "model not found" })])) as unknown as typeof fetch;
+    globalThis.fetch = (async () =>
+      ndjsonResponse([JSON.stringify({ error: "model not found" })])) as unknown as typeof fetch;
     await expect(chatStream("http://localhost:11434", "missing", [], () => {})).rejects.toThrow("model not found");
   });
 
   test("throws when the response is not ok", async () => {
-    globalThis.fetch = (async () => new Response("", { status: 404, statusText: "Not Found" })) as unknown as typeof fetch;
+    globalThis.fetch = (async () =>
+      new Response("", { status: 404, statusText: "Not Found" })) as unknown as typeof fetch;
     await expect(chatStream("http://localhost:11434", "missing", [], () => {})).rejects.toThrow("404");
   });
 });

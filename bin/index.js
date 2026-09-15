@@ -1,5 +1,73 @@
 #!/usr/bin/env node
 
+// src/chat-loop/chat-loop.ts
+import { stdin as stdin2, stdout as stdout2 } from "node:process";
+import { createInterface as createInterface2 } from "node:readline/promises";
+
+// src/ollama-client/ollama-client.ts
+async function listModelsDetailed(baseUrl) {
+  const res = await fetch(`${baseUrl}/api/tags`);
+  if (!res.ok) {
+    throw new Error(`GET /api/tags failed: ${res.status} ${res.statusText}`);
+  }
+  const data = await res.json();
+  return data.models.map((m) => ({
+    name: m.name,
+    family: m.details?.family ?? "unknown",
+    parameterSize: m.details?.parameter_size ?? "?",
+    contextLength: m.details?.context_length,
+    capabilities: m.capabilities ?? []
+  }));
+}
+async function listModels(baseUrl) {
+  const models = await listModelsDetailed(baseUrl);
+  return models.map((m) => m.name);
+}
+async function chatStream(baseUrl, model, messages, onToken) {
+  const res = await fetch(`${baseUrl}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, messages, stream: true })
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`POST /api/chat failed: ${res.status} ${res.statusText}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder;
+  let buffer = "";
+  let full = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done)
+      break;
+    buffer += decoder.decode(value, { stream: true });
+    let newlineIndex = buffer.indexOf(`
+`);
+    while (newlineIndex !== -1) {
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (line) {
+        const parsed = JSON.parse(line);
+        if (parsed.error) {
+          throw new Error(parsed.error);
+        }
+        const token = parsed.message?.content;
+        if (token) {
+          onToken(token);
+          full += token;
+        }
+      }
+      newlineIndex = buffer.indexOf(`
+`);
+    }
+  }
+  return full;
+}
+
+// src/setup-wizard/setup-wizard.ts
+import { stdin, stdout } from "node:process";
+import { createInterface } from "node:readline/promises";
+
 // src/config/config.ts
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -26,13 +94,9 @@ async function loadConfig(configDir = defaultConfigDir()) {
 }
 async function saveConfig(config, configDir = defaultConfigDir()) {
   await mkdir(configDir, { recursive: true });
-  await writeFile(getConfigPath(configDir), JSON.stringify(config, null, 2) + `
+  await writeFile(getConfigPath(configDir), `${JSON.stringify(config, null, 2)}
 `, "utf-8");
 }
-
-// src/setup-wizard/setup-wizard.ts
-import { createInterface } from "node:readline/promises";
-import { stdin, stdout } from "node:process";
 
 // src/model-suggest/model-suggest.constants.ts
 var ROLE_ORDER = ["general", "coder", "vision"];
@@ -84,64 +148,6 @@ function describeModel(model) {
   return `${model.parameterSize.padEnd(6)} caps: ${caps}${ctx}  → ${roleLabel}`;
 }
 
-// src/ollama-client/ollama-client.ts
-async function listModelsDetailed(baseUrl) {
-  const res = await fetch(`${baseUrl}/api/tags`);
-  if (!res.ok) {
-    throw new Error(`GET /api/tags failed: ${res.status} ${res.statusText}`);
-  }
-  const data = await res.json();
-  return data.models.map((m) => ({
-    name: m.name,
-    family: m.details?.family ?? "unknown",
-    parameterSize: m.details?.parameter_size ?? "?",
-    contextLength: m.details?.context_length,
-    capabilities: m.capabilities ?? []
-  }));
-}
-async function listModels(baseUrl) {
-  const models = await listModelsDetailed(baseUrl);
-  return models.map((m) => m.name);
-}
-async function chatStream(baseUrl, model, messages, onToken) {
-  const res = await fetch(`${baseUrl}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, stream: true })
-  });
-  if (!res.ok || !res.body) {
-    throw new Error(`POST /api/chat failed: ${res.status} ${res.statusText}`);
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder;
-  let buffer = "";
-  let full = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done)
-      break;
-    buffer += decoder.decode(value, { stream: true });
-    let newlineIndex;
-    while ((newlineIndex = buffer.indexOf(`
-`)) !== -1) {
-      const line = buffer.slice(0, newlineIndex).trim();
-      buffer = buffer.slice(newlineIndex + 1);
-      if (!line)
-        continue;
-      const parsed = JSON.parse(line);
-      if (parsed.error) {
-        throw new Error(parsed.error);
-      }
-      const token = parsed.message?.content;
-      if (token) {
-        onToken(token);
-        full += token;
-      }
-    }
-  }
-  return full;
-}
-
 // src/setup-wizard/setup-wizard.ts
 async function ask(rl, question, fallback = "") {
   const answer = (await rl.question(question)).trim();
@@ -186,7 +192,9 @@ Could not reach Ollama at ${baseUrl}.`);
     }
     console.log(`
 Found ${allModels.length} model(s):`);
-    chatModels.forEach((m, i) => console.log(`  ${i + 1}. ${m.name.padEnd(22)} ${describeModel(m)}`));
+    chatModels.forEach((m, i) => {
+      console.log(`  ${i + 1}. ${m.name.padEnd(22)} ${describeModel(m)}`);
+    });
     if (skipped.length > 0) {
       console.log(`  (skipped, not chat-capable: ${skipped.map((m) => m.name).join(", ")})`);
     }
@@ -247,10 +255,6 @@ Saved config to ${getConfigPath(configDir)}`);
   }
 }
 
-// src/chat-loop/chat-loop.ts
-import { createInterface as createInterface2 } from "node:readline/promises";
-import { stdin as stdin2, stdout as stdout2 } from "node:process";
-
 // src/chat-loop/chat-loop.constants.ts
 var ANSI_RESET = "\x1B[0m";
 var ANSI_GRAY = "\x1B[90m";
@@ -286,8 +290,8 @@ var commands = {
     try {
       const models = await listModels(state.config.baseUrl);
       console.log(`Models on server:
-  ` + models.join(`
-  `));
+  ${models.join(`
+  `)}`);
     } catch (err) {
       console.error(`Failed to list models: ${err.message}`);
     }

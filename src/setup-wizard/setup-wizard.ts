@@ -1,9 +1,9 @@
-import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import type { AgentProfile, Config } from "../config/config.types";
+import { createInterface } from "node:readline/promises";
 import { getConfigPath, saveConfig } from "../config/config";
-import { ROLE_DEFAULT_PROMPTS, ROLE_ORDER } from "../model-suggest/model-suggest.constants";
+import type { AgentProfile, Config } from "../config/config.types";
 import { describeModel, isChatCapable, suggestForRole } from "../model-suggest/model-suggest";
+import { ROLE_DEFAULT_PROMPTS, ROLE_ORDER } from "../model-suggest/model-suggest.constants";
 import { listModelsDetailed } from "../ollama-client/ollama-client";
 import type { ModelInfo } from "../ollama-client/ollama-client.types";
 import type { Readline, RoleSuggestion } from "./setup-wizard.types";
@@ -60,7 +60,9 @@ export async function runSetupWizard(existingRl?: Readline, configDir?: string):
     // (capabilities, family, parameter size) — no model names are hardcoded,
     // so this works the same whether Ollama runs on WSL, native Windows, macOS, or Linux.
     console.log(`\nFound ${allModels.length} model(s):`);
-    chatModels.forEach((m, i) => console.log(`  ${i + 1}. ${m.name.padEnd(22)} ${describeModel(m)}`));
+    chatModels.forEach((m, i) => {
+      console.log(`  ${i + 1}. ${m.name.padEnd(22)} ${describeModel(m)}`);
+    });
     if (skipped.length > 0) {
       console.log(`  (skipped, not chat-capable: ${skipped.map((m) => m.name).join(", ")})`);
     }
@@ -110,7 +112,11 @@ export async function runSetupWizard(existingRl?: Readline, configDir?: string):
     let defaultAgent = agents[0].name;
     if (agents.length > 1) {
       const names = agents.map((a) => a.name).join(", ");
-      defaultAgent = await ask(rl, `\nDefault profile on startup [${defaultAgent}] (options: ${names}): `, defaultAgent);
+      defaultAgent = await ask(
+        rl,
+        `\nDefault profile on startup [${defaultAgent}] (options: ${names}): `,
+        defaultAgent,
+      );
       if (!agents.some((a) => a.name === defaultAgent)) {
         defaultAgent = agents[0].name;
       }

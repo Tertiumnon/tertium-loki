@@ -1,9 +1,4 @@
-import type {
-  ChatMessage,
-  ModelInfo,
-  OllamaChatStreamChunk,
-  OllamaTagsResponse,
-} from "./ollama-client.types";
+import type { ChatMessage, ModelInfo, OllamaChatStreamChunk, OllamaTagsResponse } from "./ollama-client.types";
 
 /**
  * Reads whatever the Ollama server itself reports per model (family, parameter
@@ -65,21 +60,24 @@ export async function chatStream(
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
 
-    let newlineIndex: number;
-    while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+    let newlineIndex = buffer.indexOf("\n");
+    while (newlineIndex !== -1) {
       const line = buffer.slice(0, newlineIndex).trim();
       buffer = buffer.slice(newlineIndex + 1);
-      if (!line) continue;
 
-      const parsed = JSON.parse(line) as OllamaChatStreamChunk;
-      if (parsed.error) {
-        throw new Error(parsed.error);
+      if (line) {
+        const parsed = JSON.parse(line) as OllamaChatStreamChunk;
+        if (parsed.error) {
+          throw new Error(parsed.error);
+        }
+        const token = parsed.message?.content;
+        if (token) {
+          onToken(token);
+          full += token;
+        }
       }
-      const token = parsed.message?.content;
-      if (token) {
-        onToken(token);
-        full += token;
-      }
+
+      newlineIndex = buffer.indexOf("\n");
     }
   }
 

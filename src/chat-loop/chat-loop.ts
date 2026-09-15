@@ -1,5 +1,5 @@
-import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
+import { createInterface } from "node:readline/promises";
 import type { Config } from "../config/config.types";
 import { chatStream, listModels } from "../ollama-client/ollama-client";
 import type { ChatMessage } from "../ollama-client/ollama-client.types";
@@ -39,7 +39,7 @@ export const commands: Record<string, CommandHandler> = {
   "/models": async (_rl, state) => {
     try {
       const models = await listModels(state.config.baseUrl);
-      console.log("Models on server:\n  " + models.join("\n  "));
+      console.log(`Models on server:\n  ${models.join("\n  ")}`);
     } catch (err) {
       console.error(`Failed to list models: ${(err as Error).message}`);
     }
