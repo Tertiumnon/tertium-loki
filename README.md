@@ -201,10 +201,15 @@ file that actually ships (see `files` in `package.json`).
 
 ```bash
 bun install       # install deps
+bun test          # run the test suite
 bun run typecheck # tsc --noEmit
 bun run build     # bundle src/index.ts -> bin/index.js
 bun run start     # run the built CLI
 ```
+
+Tests are colocated with each module (`*.test.ts` next to the file it covers).
+Nothing hits a real Ollama server or your real `~/.loki/config.json` — `fetch`
+is mocked and config tests use a temp directory.
 
 Releases use [`@tertium/js`](https://www.npmjs.com/package/@tertium/js)'s
 git-flow release script (expects `main`/`develop` branches):
