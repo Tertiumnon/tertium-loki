@@ -3,13 +3,44 @@ export interface ChatMessage {
   content: string;
 }
 
-export async function listModels(baseUrl: string): Promise<string[]> {
+export interface ModelInfo {
+  name: string;
+  family: string;
+  parameterSize: string;
+  contextLength?: number;
+  capabilities: string[];
+}
+
+/**
+ * Reads whatever the Ollama server itself reports per model (family, parameter
+ * size, context length, capabilities like "insert"/"vision"/"tools"). Nothing
+ * here is a hardcoded model list — it works the same against any Ollama server
+ * (WSL, native Windows, macOS, Linux) and picks up new models automatically.
+ */
+export async function listModelsDetailed(baseUrl: string): Promise<ModelInfo[]> {
   const res = await fetch(`${baseUrl}/api/tags`);
   if (!res.ok) {
     throw new Error(`GET /api/tags failed: ${res.status} ${res.statusText}`);
   }
-  const data = (await res.json()) as { models: { name: string }[] };
-  return data.models.map((m) => m.name);
+  const data = (await res.json()) as {
+    models: {
+      name: string;
+      details?: { family?: string; parameter_size?: string; context_length?: number };
+      capabilities?: string[];
+    }[];
+  };
+  return data.models.map((m) => ({
+    name: m.name,
+    family: m.details?.family ?? "unknown",
+    parameterSize: m.details?.parameter_size ?? "?",
+    contextLength: m.details?.context_length,
+    capabilities: m.capabilities ?? [],
+  }));
+}
+
+export async function listModels(baseUrl: string): Promise<string[]> {
+  const models = await listModelsDetailed(baseUrl);
+  return models.map((m) => m.name);
 }
 
 export async function checkConnection(baseUrl: string): Promise<void> {

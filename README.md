@@ -57,8 +57,20 @@ First run walks you through setup automatically; you can also trigger it explici
 loki init
 ```
 
-It checks the connection to Ollama, lists your installed models, and lets you
-define one or more named profiles (model + optional system prompt):
+It checks the connection to Ollama, reads what the server itself reports about
+each installed model (family, parameter size, context length, and capabilities
+like `insert` or `vision`), and **suggests role-based profiles** from that —
+nothing is a hardcoded model list, so this works the same whether Ollama runs
+under WSL, natively on Windows, macOS, or Linux, and it adapts automatically as
+you pull new models:
+
+- a model with the `insert` capability (code infill) or "coder"/"code" in its
+  name → suggested as **coder**
+- a model with the `vision` capability or vision-ish naming (`llava`, `-vl`, ...)
+  → suggested as **vision**
+- everything else → suggested as **general**
+- when a role has multiple candidates, the one with the most parameters wins
+- embedding-only models are detected and skipped — they can't hold a chat
 
 ```
 loki setup
@@ -67,25 +79,32 @@ Ollama base URL [http://localhost:11434]:
 Checking connection to http://localhost:11434 ...
 
 Found 4 model(s):
-  1. mistral:7b
-  2. qwen2.5:7b
-  3. llama3.1:8b
-  4. qwen2.5-coder:7b
+  1. mistral:7b             7.2B   caps: completion, tools, 32K ctx  → general
+  2. qwen2.5:7b             7.6B   caps: completion, tools, 32K ctx  → general
+  3. llama3.1:8b            8.0B   caps: completion, tools, 128K ctx → general
+  4. qwen2.5-coder:7b       7.6B   caps: completion, tools, insert, 32K ctx → coder
 
-Pick model number for 'default' [1]: 3
-Name for this profile [general]: general
-System prompt (optional, Enter to skip):
-Add another profile? (y/N): y
+Suggested profiles based on reported capabilities:
+  general  → llama3.1:8b
+  coder    → qwen2.5-coder:7b
 
-Pick model number for 'agent 2' [1]: 4
-Name for this profile [agent2]: coder
-System prompt (optional, Enter to skip): You are an expert software engineer. Answer concisely with working code.
-Add another profile? (y/N): n
+Create 'general' profile using llama3.1:8b? (Y/n): y
+  Profile name [general]:
+  System prompt [Enter to use the general default, or type your own]:
+Create 'coder' profile using qwen2.5-coder:7b? (Y/n): y
+  Profile name [coder]:
+  System prompt [Enter to use the coder default, or type your own]:
+
+Add another custom profile? (y/N): n
 
 Default profile on startup [general] (options: general, coder):
 
 Saved config to C:\Users\you\.loki\config.json
 ```
+
+You can decline any suggestion (answer `n`) and/or add fully custom profiles
+afterward by picking a model number manually — the suggestion step never
+forces a choice on you.
 
 Then just run:
 
