@@ -1,17 +1,12 @@
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { listModelsDetailed, type ModelInfo } from "./ollamaClient.js";
-import {
-  ROLE_ORDER,
-  ROLE_DEFAULT_PROMPTS,
-  describeModel,
-  isChatCapable,
-  suggestForRole,
-  type Role,
-} from "./modelSuggest.js";
-import { saveConfig, getConfigPath, type AgentProfile, type Config } from "./config.js";
-
-export type Readline = ReturnType<typeof createInterface>;
+import type { AgentProfile, Config } from "../config/config.types";
+import { getConfigPath, saveConfig } from "../config/config";
+import { ROLE_DEFAULT_PROMPTS, ROLE_ORDER } from "../model-suggest/model-suggest.constants";
+import { describeModel, isChatCapable, suggestForRole } from "../model-suggest/model-suggest";
+import { listModelsDetailed } from "../ollama-client/ollama-client";
+import type { ModelInfo } from "../ollama-client/ollama-client.types";
+import type { Readline, RoleSuggestion } from "./setup-wizard.types";
 
 async function ask(rl: Readline, question: string, fallback = ""): Promise<string> {
   const answer = (await rl.question(question)).trim();
@@ -71,9 +66,10 @@ export async function runSetupWizard(existingRl?: Readline): Promise<Config> {
 
     const agents: AgentProfile[] = [];
 
-    const suggestions = ROLE_ORDER.map((role) => ({ role, model: suggestForRole(chatModels, role) })).filter(
-      (s): s is { role: Role; model: ModelInfo } => s.model !== undefined,
-    );
+    const suggestions: RoleSuggestion[] = ROLE_ORDER.map((role) => ({
+      role,
+      model: suggestForRole(chatModels, role),
+    })).filter((s): s is RoleSuggestion => s.model !== undefined);
 
     if (suggestions.length > 0) {
       console.log(`\nSuggested profiles based on reported capabilities:`);

@@ -1,22 +1,12 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { CONFIG_DIR_NAME, CONFIG_FILE_NAME } from "./config.constants";
+import type { Config } from "./config.types";
 
-export interface AgentProfile {
-  name: string;
-  model: string;
-  systemPrompt?: string;
-}
-
-export interface Config {
-  baseUrl: string;
-  defaultAgent: string;
-  agents: AgentProfile[];
-}
-
-const CONFIG_DIR = join(homedir(), ".loki");
-const CONFIG_PATH = join(CONFIG_DIR, "config.json");
+const CONFIG_DIR = join(homedir(), CONFIG_DIR_NAME);
+const CONFIG_PATH = join(CONFIG_DIR, CONFIG_FILE_NAME);
 
 export function configExists(): boolean {
   return existsSync(CONFIG_PATH);

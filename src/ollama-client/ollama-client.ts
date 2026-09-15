@@ -1,15 +1,9 @@
-export interface ChatMessage {
-  role: "system" | "user" | "assistant";
-  content: string;
-}
-
-export interface ModelInfo {
-  name: string;
-  family: string;
-  parameterSize: string;
-  contextLength?: number;
-  capabilities: string[];
-}
+import type {
+  ChatMessage,
+  ModelInfo,
+  OllamaChatStreamChunk,
+  OllamaTagsResponse,
+} from "./ollama-client.types";
 
 /**
  * Reads whatever the Ollama server itself reports per model (family, parameter
@@ -22,13 +16,7 @@ export async function listModelsDetailed(baseUrl: string): Promise<ModelInfo[]> 
   if (!res.ok) {
     throw new Error(`GET /api/tags failed: ${res.status} ${res.statusText}`);
   }
-  const data = (await res.json()) as {
-    models: {
-      name: string;
-      details?: { family?: string; parameter_size?: string; context_length?: number };
-      capabilities?: string[];
-    }[];
-  };
+  const data = (await res.json()) as OllamaTagsResponse;
   return data.models.map((m) => ({
     name: m.name,
     family: m.details?.family ?? "unknown",
@@ -83,11 +71,7 @@ export async function chatStream(
       buffer = buffer.slice(newlineIndex + 1);
       if (!line) continue;
 
-      const parsed = JSON.parse(line) as {
-        message?: { content?: string };
-        done?: boolean;
-        error?: string;
-      };
+      const parsed = JSON.parse(line) as OllamaChatStreamChunk;
       if (parsed.error) {
         throw new Error(parsed.error);
       }

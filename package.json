@@ -1,15 +1,19 @@
 {
   "name": "@tertium/loki",
   "version": "0.1.0",
-  "description": "Terminal chat CLI for local Ollama models — Claude-Code-CLI style, Node/TypeScript, no Python",
+  "description": "Terminal chat CLI for local Ollama models — Claude-Code-CLI style, Node/TypeScript",
   "author": "Vitalii Balabanov",
   "email": "tertiumnon@gmail.com",
   "main": "bin/index.js",
   "type": "module",
   "scripts": {
-    "build": "tsc -p .",
+    "build": "bun build ./src/index.ts --outfile ./bin/index.js --target node",
     "start": "node bin/index.js",
-    "prepublishOnly": "npm run build"
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "bun run build",
+    "release:patch": "bun node_modules/@tertium/js/scripts/release.js patch",
+    "release:minor": "bun node_modules/@tertium/js/scripts/release.js minor",
+    "release:major": "bun node_modules/@tertium/js/scripts/release.js major"
   },
   "bin": {
     "loki": "./bin/index.js"
@@ -28,7 +32,11 @@
   "engines": {
     "node": ">=18.17"
   },
+  "dependencies": {
+    "@tertium/js": "^2.7.3"
+  },
   "devDependencies": {
+    "@types/bun": "^1.4.2",
     "@types/node": "^24.0.0",
     "typescript": "^5.6.0"
   },

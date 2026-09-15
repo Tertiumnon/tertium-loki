@@ -1,21 +1,11 @@
-import type { ModelInfo } from "./ollamaClient.js";
-
-export type Role = "general" | "coder" | "vision";
-
-export const ROLE_ORDER: Role[] = ["general", "coder", "vision"];
-
-export const ROLE_DEFAULT_PROMPTS: Record<Role, string> = {
-  general: "You are a helpful, concise assistant.",
-  coder: "You are an expert software engineer. Answer coding questions concisely, with working code.",
-  vision: "You are a helpful assistant that can analyze and describe images in detail.",
-};
-
-// Naming-convention heuristics only — never specific model tags — so this holds
-// up across whatever models a given user happens to have pulled.
-const CODER_NAME_PATTERN = /code|coder|sql|devstral|starcoder/i;
-const VISION_NAME_PATTERN = /vision|[-:]vl\b|vl[-:]|llava|bakllava|moondream|pixtral/i;
-const EMBED_NAME_PATTERN = /embed/i;
-const GUARD_NAME_PATTERN = /guard|shield|moderation/i;
+import type { ModelInfo } from "../ollama-client/ollama-client.types";
+import {
+  CODER_NAME_PATTERN,
+  EMBED_NAME_PATTERN,
+  GUARD_NAME_PATTERN,
+  VISION_NAME_PATTERN,
+} from "./model-suggest.constants";
+import type { Role } from "./model-suggest.types";
 
 function parseParamCount(size: string): number {
   const match = /([\d.]+)\s*B/i.exec(size);

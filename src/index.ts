@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { configExists, loadConfig } from "./config.js";
-import { runSetupWizard } from "./setupWizard.js";
-import { runChatLoop } from "./chatLoop.js";
+import { configExists, loadConfig } from "./config/config";
+import { runSetupWizard } from "./setup-wizard/setup-wizard";
+import { runChatLoop } from "./chat-loop/chat-loop";
 
 async function main(): Promise<void> {
   const command = process.argv[2];

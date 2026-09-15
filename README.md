@@ -35,19 +35,21 @@ them mid-conversation.
   WSL2 (WSL2 auto-forwards `localhost` ports to Windows, so a native Windows CLI
   reaches a WSL-hosted Ollama server with no extra bridging).
 - At least one model pulled: `ollama pull llama3.1:8b` (or any other tag).
-- Node.js >= 18.17.
+- [Bun](https://bun.sh) >= 1.4 (used as both installer and bundler).
+- Node.js >= 18.17 (the built CLI runs on plain Node too, no Bun needed at runtime).
 
 ## Install
 
 ```bash
 git clone git@github.com:Tertiumnon/tertium-loki.git
 cd tertium-loki
-npm install
-npm run build
-npm install -g .
+bun install
+bun run build
+bun link
 ```
 
-This registers `loki` as a global command.
+`bun link` registers `loki` as a global command (via Bun's global bin dir, e.g.
+`~/.bun/bin` — make sure that's on your `PATH`).
 
 ## Usage
 
@@ -158,12 +160,60 @@ Edit it by hand, or re-run `loki init` / `loki config`.
 
 ## How it works
 
-`loki` talks directly to Ollama's OpenAI-independent native API:
+`loki` talks directly to Ollama's native HTTP API:
 - `GET /api/tags` to list installed models
 - `POST /api/chat` with `stream: true`, reading newline-delimited JSON chunks for
   token-by-token streaming output
 
-No SDKs, no framework — see `src/ollamaClient.ts`.
+No SDKs, no framework — see `src/ollama-client/ollama-client.ts`.
+
+## Project structure
+
+Each module lives in its own folder with logic, types, and constants split out:
+
+```
+src/
+  index.ts                          entry point (CLI arg handling)
+  ollama-client/
+    ollama-client.ts                fetch calls to Ollama's HTTP API
+    ollama-client.types.ts
+  config/
+    config.ts                       read/write ~/.loki/config.json
+    config.types.ts
+    config.constants.ts
+  model-suggest/
+    model-suggest.ts                capability/name-based role classification
+    model-suggest.types.ts
+    model-suggest.constants.ts
+  setup-wizard/
+    setup-wizard.ts                 interactive first-run / /init flow
+    setup-wizard.types.ts
+  chat-loop/
+    chat-loop.ts                    the REPL + slash-command dispatch table
+    chat-loop.types.ts
+    chat-loop.constants.ts
+```
+
+`bun build` bundles all of this into a single `bin/index.js` — that's the only
+file that actually ships (see `files` in `package.json`).
+
+## Development
+
+```bash
+bun install       # install deps
+bun run typecheck # tsc --noEmit
+bun run build     # bundle src/index.ts -> bin/index.js
+bun run start     # run the built CLI
+```
+
+Releases use [`@tertium/js`](https://www.npmjs.com/package/@tertium/js)'s
+git-flow release script (expects `main`/`develop` branches):
+
+```bash
+bun run release:patch
+bun run release:minor
+bun run release:major
+```
 
 ## License
 
