@@ -203,6 +203,8 @@ file that actually ships (see `files` in `package.json`).
 bun install       # install deps
 bun test          # run the test suite
 bun run typecheck # tsc --noEmit
+bun run lint      # biome check .
+bun run format    # biome format --write .
 bun run build     # bundle src/index.ts -> bin/index.js
 bun run start     # run the built CLI
 ```
