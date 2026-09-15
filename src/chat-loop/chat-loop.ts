@@ -19,7 +19,7 @@ function printHelp(state: ChatState): void {
   console.log("  /exit, /quit    leave chat");
 }
 
-const commands: Record<string, CommandHandler> = {
+export const commands: Record<string, CommandHandler> = {
   "/help": async (_rl, state) => {
     printHelp(state);
     return "continue";

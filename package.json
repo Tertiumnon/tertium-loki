@@ -9,6 +9,7 @@
   "scripts": {
     "build": "bun build ./src/index.ts --outfile ./bin/index.js --target node",
     "start": "node bin/index.js",
+    "test": "bun test",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "bun run build",
     "release:patch": "bun node_modules/@tertium/js/scripts/release.js patch",

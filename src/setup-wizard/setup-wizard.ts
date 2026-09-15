@@ -28,7 +28,8 @@ async function addCustomProfile(rl: Readline, models: ModelInfo[], agents: Agent
   agents.push({ name, model: model.name, ...(systemPrompt ? { systemPrompt } : {}) });
 }
 
-export async function runSetupWizard(existingRl?: Readline): Promise<Config> {
+/** configDir is overridable so tests can point at a temp directory instead of the real ~/.loki. */
+export async function runSetupWizard(existingRl?: Readline, configDir?: string): Promise<Config> {
   const rl = existingRl ?? createInterface({ input: stdin, output: stdout });
 
   console.log("loki setup\n");
@@ -116,9 +117,9 @@ export async function runSetupWizard(existingRl?: Readline): Promise<Config> {
     }
 
     const config: Config = { baseUrl, defaultAgent, agents };
-    await saveConfig(config);
+    await saveConfig(config, configDir);
 
-    console.log(`\nSaved config to ${getConfigPath()}`);
+    console.log(`\nSaved config to ${getConfigPath(configDir)}`);
     console.log(`Run "loki" to start chatting, or "loki config" to redo this setup.\n`);
 
     return config;

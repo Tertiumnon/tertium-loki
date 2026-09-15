@@ -11,21 +11,22 @@ var CONFIG_DIR_NAME = ".loki";
 var CONFIG_FILE_NAME = "config.json";
 
 // src/config/config.ts
-var CONFIG_DIR = join(homedir(), CONFIG_DIR_NAME);
-var CONFIG_PATH = join(CONFIG_DIR, CONFIG_FILE_NAME);
-function configExists() {
-  return existsSync(CONFIG_PATH);
+function defaultConfigDir() {
+  return join(homedir(), CONFIG_DIR_NAME);
 }
-function getConfigPath() {
-  return CONFIG_PATH;
+function getConfigPath(configDir = defaultConfigDir()) {
+  return join(configDir, CONFIG_FILE_NAME);
 }
-async function loadConfig() {
-  const raw = await readFile(CONFIG_PATH, "utf-8");
+function configExists(configDir = defaultConfigDir()) {
+  return existsSync(getConfigPath(configDir));
+}
+async function loadConfig(configDir = defaultConfigDir()) {
+  const raw = await readFile(getConfigPath(configDir), "utf-8");
   return JSON.parse(raw);
 }
-async function saveConfig(config) {
-  await mkdir(CONFIG_DIR, { recursive: true });
-  await writeFile(CONFIG_PATH, JSON.stringify(config, null, 2) + `
+async function saveConfig(config, configDir = defaultConfigDir()) {
+  await mkdir(configDir, { recursive: true });
+  await writeFile(getConfigPath(configDir), JSON.stringify(config, null, 2) + `
 `, "utf-8");
 }
 
@@ -159,7 +160,7 @@ async function addCustomProfile(rl, models, agents) {
   const systemPrompt = await ask(rl, `System prompt (optional, Enter to skip): `, "");
   agents.push({ name, model: model.name, ...systemPrompt ? { systemPrompt } : {} });
 }
-async function runSetupWizard(existingRl) {
+async function runSetupWizard(existingRl, configDir) {
   const rl = existingRl ?? createInterface({ input: stdin, output: stdout });
   console.log(`loki setup
 `);
@@ -234,9 +235,9 @@ Default profile on startup [${defaultAgent}] (options: ${names}): `, defaultAgen
       }
     }
     const config = { baseUrl, defaultAgent, agents };
-    await saveConfig(config);
+    await saveConfig(config, configDir);
     console.log(`
-Saved config to ${getConfigPath()}`);
+Saved config to ${getConfigPath(configDir)}`);
     console.log(`Run "loki" to start chatting, or "loki config" to redo this setup.
 `);
     return config;
