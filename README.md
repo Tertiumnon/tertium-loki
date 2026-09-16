@@ -158,14 +158,52 @@ Stored at `~/.loki/config.json`:
 
 Edit it by hand, or re-run `loki init` / `loki config`.
 
+## Tools (internet access)
+
+Local models have no internet access by default — they can only answer from
+what they learned during training, so anything time-sensitive (weather, current
+events) either gets refused or hallucinated. `loki` gives every agent two
+built-in tools it can call mid-conversation, the same ReAct-style loop Claude
+Code itself uses for `WebFetch`:
+
+- **`get_weather(location)`** — current conditions via
+  [Open-Meteo](https://open-meteo.com) (free, no API key, built for
+  programmatic access).
+- **`fetch_url(url)`** — fetches a specific page and returns its text (HTML
+  stripped), like Claude Code's `WebFetch`.
+
+```
+You (general): what's the weather in Paris right now?
+general:
+[calling get_weather({"location":"Paris"})]
+The current weather in Paris is partly cloudy, 16.7°C, wind 10 km/h.
+```
+
+**No general "search the web" tool.** Real search APIs (Google/Bing/Brave/Tavily)
+all require an API key; the free, keyless alternative is scraping a search
+engine's HTML, which DuckDuckGo actively blocks with a bot-detection CAPTCHA —
+confirmed while building this, so it wasn't shipped as a silently-broken tool.
+If you want open-ended search, add a tool backed by a paid/keyed search API in
+`src/web-tools/web-tools.ts`.
+
+**Reliability depends on the model.** Tool-calling only works well on models
+actually trained for it, and Ollama's local tool-calling support can be
+inconsistent even then — `llama3.1:8b` reliably used both tools correctly in
+testing, while `qwen2.5-coder:7b` sometimes emitted the tool call as plain text
+instead of a structured call. If a tool doesn't seem to fire, try `/agent
+general` (or whichever profile uses your strongest general-purpose model).
+
 ## How it works
 
 `loki` talks directly to Ollama's native HTTP API:
 - `GET /api/tags` to list installed models
 - `POST /api/chat` with `stream: true`, reading newline-delimited JSON chunks for
-  token-by-token streaming output
+  token-by-token streaming output, including any `tool_calls` the model makes
+- when the model calls a tool, `loki` runs it locally and feeds the result back
+  as a `tool` message, looping until it gets a final answer
 
-No SDKs, no framework — see `src/ollama-client/ollama-client.ts`.
+No SDKs, no framework — see `src/ollama-client/ollama-client.ts` and
+`src/web-tools/web-tools.ts`.
 
 ## Project structure
 
@@ -175,8 +213,12 @@ Each module lives in its own folder with logic, types, and constants split out:
 src/
   index.ts                          entry point (CLI arg handling)
   ollama-client/
-    ollama-client.ts                fetch calls to Ollama's HTTP API
+    ollama-client.ts                fetch calls to Ollama's HTTP API + tool-calling loop
     ollama-client.types.ts
+  web-tools/
+    web-tools.ts                    get_weather / fetch_url tool implementations
+    web-tools.types.ts
+    web-tools.constants.ts
   config/
     config.ts                       read/write ~/.loki/config.json
     config.types.ts

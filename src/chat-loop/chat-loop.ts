@@ -1,9 +1,10 @@
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import type { Config } from "../config/config.types";
-import { chatStream, listModels } from "../ollama-client/ollama-client";
+import { chatWithTools, listModels } from "../ollama-client/ollama-client";
 import type { ChatMessage } from "../ollama-client/ollama-client.types";
 import { runSetupWizard } from "../setup-wizard/setup-wizard";
+import { BUILTIN_TOOLS } from "../web-tools/web-tools";
 import { ANSI_BLUE, ANSI_GRAY, ANSI_RESET } from "./chat-loop.constants";
 import type { ChatState, CommandHandler, CommandResult, Readline } from "./chat-loop.types";
 
@@ -88,9 +89,18 @@ async function sendMessage(state: ChatState, content: string): Promise<void> {
 
   process.stdout.write(`${ANSI_BLUE}${state.agent.name}${ANSI_RESET}: `);
   try {
-    const reply = await chatStream(state.config.baseUrl, state.agent.model, outgoing, (token) => {
-      process.stdout.write(token);
-    });
+    const reply = await chatWithTools(
+      state.config.baseUrl,
+      state.agent.model,
+      outgoing,
+      BUILTIN_TOOLS,
+      (token) => {
+        process.stdout.write(token);
+      },
+      (name, args) => {
+        process.stdout.write(`\n${ANSI_GRAY}[calling ${name}(${JSON.stringify(args)})]${ANSI_RESET}\n`);
+      },
+    );
     console.log("\n");
     state.messages.push({ role: "assistant", content: reply });
   } catch (err) {

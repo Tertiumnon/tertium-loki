@@ -5,6 +5,7 @@ import { stdin as stdin2, stdout as stdout2 } from "node:process";
 import { createInterface as createInterface2 } from "node:readline/promises";
 
 // src/ollama-client/ollama-client.ts
+var MAX_TOOL_ROUNDS = 5;
 async function listModelsDetailed(baseUrl) {
   const res = await fetch(`${baseUrl}/api/tags`);
   if (!res.ok) {
@@ -23,11 +24,11 @@ async function listModels(baseUrl) {
   const models = await listModelsDetailed(baseUrl);
   return models.map((m) => m.name);
 }
-async function chatStream(baseUrl, model, messages, onToken) {
+async function streamChat(baseUrl, model, messages, onToken, tools) {
   const res = await fetch(`${baseUrl}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, stream: true })
+    body: JSON.stringify({ model, messages, stream: true, ...tools?.length ? { tools } : {} })
   });
   if (!res.ok || !res.body) {
     throw new Error(`POST /api/chat failed: ${res.status} ${res.statusText}`);
@@ -35,7 +36,8 @@ async function chatStream(baseUrl, model, messages, onToken) {
   const reader = res.body.getReader();
   const decoder = new TextDecoder;
   let buffer = "";
-  let full = "";
+  let content = "";
+  const toolCalls = [];
   while (true) {
     const { done, value } = await reader.read();
     if (done)
@@ -54,14 +56,55 @@ async function chatStream(baseUrl, model, messages, onToken) {
         const token = parsed.message?.content;
         if (token) {
           onToken(token);
-          full += token;
+          content += token;
+        }
+        if (parsed.message?.tool_calls?.length) {
+          toolCalls.push(...parsed.message.tool_calls);
         }
       }
       newlineIndex = buffer.indexOf(`
 `);
     }
   }
-  return full;
+  return { content, toolCalls };
+}
+function parseToolArguments(raw) {
+  if (typeof raw !== "string")
+    return raw;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+async function chatWithTools(baseUrl, model, messages, tools, onToken, onToolCall) {
+  const ollamaTools = tools.map((t) => ({
+    type: "function",
+    function: { name: t.name, description: t.description, parameters: t.parameters }
+  }));
+  const toolByName = new Map(tools.map((t) => [t.name, t]));
+  const history = [...messages];
+  for (let round = 0;round < MAX_TOOL_ROUNDS; round++) {
+    const { content, toolCalls } = await streamChat(baseUrl, model, history, onToken, ollamaTools);
+    if (toolCalls.length === 0) {
+      return content;
+    }
+    history.push({ role: "assistant", content, tool_calls: toolCalls });
+    for (const call of toolCalls) {
+      const tool = toolByName.get(call.function.name);
+      const args = parseToolArguments(call.function.arguments);
+      onToolCall?.(call.function.name, args);
+      const result = tool ? await tool.execute(args).catch((err) => `Error: ${err.message}`) : `Error: unknown tool "${call.function.name}"`;
+      history.push({
+        role: "tool",
+        content: `Result: ${result}
+
+Answer the user's question directly using this result. Do not describe that you called a tool.`,
+        tool_name: call.function.name
+      });
+    }
+  }
+  return "(stopped after too many tool calls without a final answer)";
 }
 
 // src/setup-wizard/setup-wizard.ts
@@ -255,6 +298,112 @@ Saved config to ${getConfigPath(configDir)}`);
   }
 }
 
+// src/web-tools/web-tools.constants.ts
+var OPEN_METEO_GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search";
+var OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
+var FETCH_URL_MAX_CHARS = 4000;
+var USER_AGENT = "loki-cli (+https://github.com/Tertiumnon/tertium-loki)";
+var WMO_WEATHER_DESCRIPTIONS = {
+  0: "Clear sky",
+  1: "Mainly clear",
+  2: "Partly cloudy",
+  3: "Overcast",
+  45: "Fog",
+  48: "Depositing rime fog",
+  51: "Light drizzle",
+  53: "Moderate drizzle",
+  55: "Dense drizzle",
+  56: "Light freezing drizzle",
+  57: "Dense freezing drizzle",
+  61: "Slight rain",
+  63: "Moderate rain",
+  65: "Heavy rain",
+  66: "Light freezing rain",
+  67: "Heavy freezing rain",
+  71: "Slight snow fall",
+  73: "Moderate snow fall",
+  75: "Heavy snow fall",
+  77: "Snow grains",
+  80: "Slight rain showers",
+  81: "Moderate rain showers",
+  82: "Violent rain showers",
+  85: "Slight snow showers",
+  86: "Heavy snow showers",
+  95: "Thunderstorm",
+  96: "Thunderstorm with slight hail",
+  99: "Thunderstorm with heavy hail"
+};
+
+// src/web-tools/web-tools.ts
+async function geocode(location) {
+  const url = `${OPEN_METEO_GEOCODING_URL}?name=${encodeURIComponent(location)}&count=1`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Geocoding lookup failed: ${res.status} ${res.statusText}`);
+  }
+  const data = await res.json();
+  const first = data.results?.[0];
+  return first ? { name: first.name, latitude: first.latitude, longitude: first.longitude, country: first.country } : undefined;
+}
+async function fetchCurrentWeather(latitude, longitude) {
+  const url = `${OPEN_METEO_FORECAST_URL}?latitude=${latitude}&longitude=${longitude}&current=temperature_2m,weather_code,wind_speed_10m&timezone=auto`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    throw new Error(`Forecast lookup failed: ${res.status} ${res.statusText}`);
+  }
+  const data = await res.json();
+  return {
+    temperatureC: data.current.temperature_2m,
+    windSpeedKph: data.current.wind_speed_10m,
+    weatherCode: data.current.weather_code
+  };
+}
+async function getWeather(location) {
+  const place = await geocode(location);
+  if (!place) {
+    return `No location found matching "${location}".`;
+  }
+  const weather = await fetchCurrentWeather(place.latitude, place.longitude);
+  const description = WMO_WEATHER_DESCRIPTIONS[weather.weatherCode] ?? `weather code ${weather.weatherCode}`;
+  const where = [place.name, place.country].filter(Boolean).join(", ");
+  return `Current weather in ${where}: ${description}, ${weather.temperatureC}°C, wind ${weather.windSpeedKph} km/h.`;
+}
+async function fetchUrl(url) {
+  const res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
+  if (!res.ok) {
+    throw new Error(`Fetching ${url} failed: ${res.status} ${res.statusText}`);
+  }
+  const html = await res.text();
+  const text = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return text.length > FETCH_URL_MAX_CHARS ? `${text.slice(0, FETCH_URL_MAX_CHARS)}…` : text;
+}
+var BUILTIN_TOOLS = [
+  {
+    name: "get_weather",
+    description: "Get the current weather for a named location (city, region, or place name).",
+    parameters: {
+      type: "object",
+      properties: {
+        location: { type: "string", description: "City or place name, e.g. 'Paris' or 'Tokyo, Japan'" }
+      },
+      required: ["location"]
+    },
+    execute: (args) => getWeather(String(args.location ?? ""))
+  },
+  {
+    name: "fetch_url",
+    description: "Fetch the readable text content of a specific web page URL.",
+    parameters: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "A fully-qualified http(s) URL" }
+      },
+      required: ["url"]
+    },
+    execute: (args) => fetchUrl(String(args.url ?? ""))
+  }
+];
+
 // src/chat-loop/chat-loop.constants.ts
 var ANSI_RESET = "\x1B[0m";
 var ANSI_GRAY = "\x1B[90m";
@@ -332,8 +481,12 @@ async function sendMessage(state, content) {
   const outgoing = state.agent.systemPrompt ? [{ role: "system", content: state.agent.systemPrompt }, ...state.messages] : state.messages;
   process.stdout.write(`${ANSI_BLUE}${state.agent.name}${ANSI_RESET}: `);
   try {
-    const reply = await chatStream(state.config.baseUrl, state.agent.model, outgoing, (token) => {
+    const reply = await chatWithTools(state.config.baseUrl, state.agent.model, outgoing, BUILTIN_TOOLS, (token) => {
       process.stdout.write(token);
+    }, (name, args) => {
+      process.stdout.write(`
+${ANSI_GRAY}[calling ${name}(${JSON.stringify(args)})]${ANSI_RESET}
+`);
     });
     console.log(`
 `);

@@ -1,11 +1,16 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chatStream, listModelsDetailed } from "./ollama-client";
+import { chatStream, chatWithTools, listModelsDetailed } from "./ollama-client";
+import type { ToolDefinition } from "./ollama-client.types";
 
 const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });
+
+function ndjsonResponse(lines: string[]): Response {
+  return new Response(lines.map((l) => `${l}\n`).join(""), { status: 200 });
+}
 
 describe("listModelsDetailed", () => {
   test("maps the raw /api/tags shape into ModelInfo", async () => {
@@ -54,10 +59,6 @@ describe("listModelsDetailed", () => {
 });
 
 describe("chatStream", () => {
-  function ndjsonResponse(lines: string[]) {
-    return new Response(lines.map((l) => `${l}\n`).join(""), { status: 200 });
-  }
-
   test("streams tokens as they arrive and assembles the full reply", async () => {
     globalThis.fetch = (async () =>
       ndjsonResponse([
@@ -83,5 +84,123 @@ describe("chatStream", () => {
     globalThis.fetch = (async () =>
       new Response("", { status: 404, statusText: "Not Found" })) as unknown as typeof fetch;
     await expect(chatStream("http://localhost:11434", "missing", [], () => {})).rejects.toThrow("404");
+  });
+});
+
+describe("chatWithTools", () => {
+  function fakeTool(name: string, result: string): ToolDefinition {
+    return {
+      name,
+      description: `test tool ${name}`,
+      parameters: { type: "object", properties: {} },
+      execute: async () => result,
+    };
+  }
+
+  test("returns directly when the model calls no tools", async () => {
+    globalThis.fetch = (async () =>
+      ndjsonResponse([
+        JSON.stringify({ message: { content: "Hi there" } }),
+        JSON.stringify({ done: true }),
+      ])) as unknown as typeof fetch;
+
+    const reply = await chatWithTools("http://localhost:11434", "test-model", [], [fakeTool("noop", "")], () => {});
+    expect(reply).toBe("Hi there");
+  });
+
+  test("executes a tool call, feeds the result back, and returns the final answer", async () => {
+    let round = 0;
+    globalThis.fetch = (async () => {
+      round++;
+      if (round === 1) {
+        return ndjsonResponse([
+          JSON.stringify({
+            message: {
+              content: "",
+              tool_calls: [{ function: { name: "get_weather", arguments: { location: "Paris" } } }],
+            },
+          }),
+        ]);
+      }
+      return ndjsonResponse([JSON.stringify({ message: { content: "It is sunny in Paris." } })]);
+    }) as unknown as typeof fetch;
+
+    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    const reply = await chatWithTools(
+      "http://localhost:11434",
+      "test-model",
+      [{ role: "user", content: "weather in paris?" }],
+      [fakeTool("get_weather", "Sunny, 20°C")],
+      () => {},
+      (name, args) => calls.push({ name, args }),
+    );
+
+    expect(reply).toBe("It is sunny in Paris.");
+    expect(calls).toEqual([{ name: "get_weather", args: { location: "Paris" } }]);
+    expect(round).toBe(2);
+  });
+
+  test("reports an unknown tool name without crashing", async () => {
+    let round = 0;
+    globalThis.fetch = (async () => {
+      round++;
+      if (round === 1) {
+        return ndjsonResponse([
+          JSON.stringify({
+            message: { content: "", tool_calls: [{ function: { name: "does_not_exist", arguments: {} } }] },
+          }),
+        ]);
+      }
+      return ndjsonResponse([JSON.stringify({ message: { content: "done" } })]);
+    }) as unknown as typeof fetch;
+
+    const reply = await chatWithTools("http://localhost:11434", "test-model", [], [], () => {});
+    expect(reply).toBe("done");
+  });
+
+  test("stops after MAX_TOOL_ROUNDS if the model never gives a final answer", async () => {
+    globalThis.fetch = (async () =>
+      ndjsonResponse([
+        JSON.stringify({ message: { content: "", tool_calls: [{ function: { name: "loop", arguments: {} } }] } }),
+      ])) as unknown as typeof fetch;
+
+    const reply = await chatWithTools(
+      "http://localhost:11434",
+      "test-model",
+      [],
+      [fakeTool("loop", "again")],
+      () => {},
+    );
+    expect(reply).toContain("too many tool calls");
+  });
+
+  test("parses stringified JSON arguments as well as plain objects", async () => {
+    let round = 0;
+    globalThis.fetch = (async () => {
+      round++;
+      if (round === 1) {
+        return ndjsonResponse([
+          JSON.stringify({
+            message: {
+              content: "",
+              tool_calls: [{ function: { name: "get_weather", arguments: '{"location":"Rome"}' } }],
+            },
+          }),
+        ]);
+      }
+      return ndjsonResponse([JSON.stringify({ message: { content: "warm" } })]);
+    }) as unknown as typeof fetch;
+
+    const calls: Array<Record<string, unknown>> = [];
+    await chatWithTools(
+      "http://localhost:11434",
+      "test-model",
+      [],
+      [fakeTool("get_weather", "warm")],
+      () => {},
+      (_name, args) => calls.push(args),
+    );
+
+    expect(calls).toEqual([{ location: "Rome" }]);
   });
 });

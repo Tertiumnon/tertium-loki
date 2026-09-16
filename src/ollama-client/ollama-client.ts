@@ -1,4 +1,14 @@
-import type { ChatMessage, ModelInfo, OllamaChatStreamChunk, OllamaTagsResponse } from "./ollama-client.types";
+import type {
+  ChatMessage,
+  ModelInfo,
+  OllamaChatStreamChunk,
+  OllamaTagsResponse,
+  OllamaTool,
+  OllamaToolCall,
+  ToolDefinition,
+} from "./ollama-client.types";
+
+const MAX_TOOL_ROUNDS = 5;
 
 /**
  * Reads whatever the Ollama server itself reports per model (family, parameter
@@ -30,20 +40,23 @@ export async function checkConnection(baseUrl: string): Promise<void> {
   await listModels(baseUrl);
 }
 
-/**
- * Streams a chat completion from Ollama's /api/chat endpoint (newline-delimited JSON).
- * Calls onToken for each content fragment as it arrives; returns the full assistant reply.
- */
-export async function chatStream(
+interface StreamedTurn {
+  content: string;
+  toolCalls: OllamaToolCall[];
+}
+
+/** POSTs one /api/chat turn and reads the newline-delimited JSON stream, collecting text + any tool calls. */
+async function streamChat(
   baseUrl: string,
   model: string,
   messages: ChatMessage[],
   onToken: (token: string) => void,
-): Promise<string> {
+  tools?: OllamaTool[],
+): Promise<StreamedTurn> {
   const res = await fetch(`${baseUrl}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, stream: true }),
+    body: JSON.stringify({ model, messages, stream: true, ...(tools?.length ? { tools } : {}) }),
   });
 
   if (!res.ok || !res.body) {
@@ -53,7 +66,8 @@ export async function chatStream(
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
-  let full = "";
+  let content = "";
+  const toolCalls: OllamaToolCall[] = [];
 
   while (true) {
     const { done, value } = await reader.read();
@@ -73,7 +87,10 @@ export async function chatStream(
         const token = parsed.message?.content;
         if (token) {
           onToken(token);
-          full += token;
+          content += token;
+        }
+        if (parsed.message?.tool_calls?.length) {
+          toolCalls.push(...parsed.message.tool_calls);
         }
       }
 
@@ -81,5 +98,79 @@ export async function chatStream(
     }
   }
 
-  return full;
+  return { content, toolCalls };
+}
+
+/**
+ * Streams a chat completion from Ollama's /api/chat endpoint (newline-delimited JSON).
+ * Calls onToken for each content fragment as it arrives; returns the full assistant reply.
+ */
+export async function chatStream(
+  baseUrl: string,
+  model: string,
+  messages: ChatMessage[],
+  onToken: (token: string) => void,
+): Promise<string> {
+  const { content } = await streamChat(baseUrl, model, messages, onToken);
+  return content;
+}
+
+function parseToolArguments(raw: OllamaToolCall["function"]["arguments"]): Record<string, unknown> {
+  if (typeof raw !== "string") return raw;
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Like chatStream, but lets the model call tools mid-conversation (e.g. get_weather,
+ * fetch_url) — the ReAct-style loop Claude Code itself uses for WebFetch/WebSearch,
+ * just against a local Ollama model instead. Runs each tool call locally, feeds the
+ * result back as a "tool" message, and repeats until the model gives a final answer
+ * or MAX_TOOL_ROUNDS is hit.
+ */
+export async function chatWithTools(
+  baseUrl: string,
+  model: string,
+  messages: ChatMessage[],
+  tools: ToolDefinition[],
+  onToken: (token: string) => void,
+  onToolCall?: (name: string, args: Record<string, unknown>) => void,
+): Promise<string> {
+  const ollamaTools: OllamaTool[] = tools.map((t) => ({
+    type: "function",
+    function: { name: t.name, description: t.description, parameters: t.parameters },
+  }));
+  const toolByName = new Map(tools.map((t) => [t.name, t]));
+  const history = [...messages];
+
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const { content, toolCalls } = await streamChat(baseUrl, model, history, onToken, ollamaTools);
+
+    if (toolCalls.length === 0) {
+      return content;
+    }
+
+    history.push({ role: "assistant", content, tool_calls: toolCalls });
+
+    for (const call of toolCalls) {
+      const tool = toolByName.get(call.function.name);
+      const args = parseToolArguments(call.function.arguments);
+      onToolCall?.(call.function.name, args);
+
+      const result = tool
+        ? await tool.execute(args).catch((err: unknown) => `Error: ${(err as Error).message}`)
+        : `Error: unknown tool "${call.function.name}"`;
+
+      history.push({
+        role: "tool",
+        content: `Result: ${result}\n\nAnswer the user's question directly using this result. Do not describe that you called a tool.`,
+        tool_name: call.function.name,
+      });
+    }
+  }
+
+  return "(stopped after too many tool calls without a final answer)";
 }
