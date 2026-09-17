@@ -2,9 +2,11 @@ import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import type { Config } from "../config/config.types";
 import { chatWithTools, listModels } from "../ollama-client/ollama-client";
-import type { ChatMessage } from "../ollama-client/ollama-client.types";
+import type { ChatMessage, ToolDefinition } from "../ollama-client/ollama-client.types";
 import { runSetupWizard } from "../setup-wizard/setup-wizard";
 import { BUILTIN_TOOLS } from "../web-tools/web-tools";
+import { createFileTools, loadWorkspaceConfig } from "../workspace/workspace";
+import type { PendingApproval } from "../workspace/workspace.types";
 import { ANSI_BLUE, ANSI_GRAY, ANSI_RESET } from "./chat-loop.constants";
 import type { ChatState, CommandHandler, CommandResult, Readline } from "./chat-loop.types";
 
@@ -80,12 +82,24 @@ async function dispatchCommand(rl: Readline, state: ChatState, input: string): P
   return handler ? handler(rl, state, rest.join(" ")) : undefined;
 }
 
-async function sendMessage(state: ChatState, content: string): Promise<void> {
+async function sendMessage(state: ChatState, content: string, rl: Readline): Promise<void> {
   state.messages.push({ role: "user", content });
 
   const outgoing: ChatMessage[] = state.agent.systemPrompt
     ? [{ role: "system", content: state.agent.systemPrompt }, ...state.messages]
     : state.messages;
+
+  let allTools: ToolDefinition[] = [...BUILTIN_TOOLS];
+
+  if (state.workspaceConfig) {
+    const approvalHandler = async (approval: PendingApproval): Promise<boolean> => {
+      const answer = await rl.question(`\n${ANSI_GRAY}Approve ${approval.description}? (y/N): ${ANSI_RESET}`);
+      return answer.toLowerCase().startsWith("y");
+    };
+
+    const fileTools = createFileTools(state.workspaceConfig, approvalHandler);
+    allTools = [...allTools, ...fileTools];
+  }
 
   process.stdout.write(`${ANSI_BLUE}${state.agent.name}${ANSI_RESET}: `);
   try {
@@ -93,7 +107,7 @@ async function sendMessage(state: ChatState, content: string): Promise<void> {
       state.config.baseUrl,
       state.agent.model,
       outgoing,
-      BUILTIN_TOOLS,
+      allTools,
       (token) => {
         process.stdout.write(token);
       },
@@ -112,13 +126,19 @@ async function sendMessage(state: ChatState, content: string): Promise<void> {
 export async function runChatLoop(config: Config): Promise<void> {
   const rl = createInterface({ input: stdin, output: stdout });
 
+  const workspaceConfig = await loadWorkspaceConfig();
+
   const state: ChatState = {
     config,
     agent: config.agents.find((a) => a.name === config.defaultAgent) ?? config.agents[0],
     messages: [],
+    workspaceConfig: workspaceConfig ?? undefined,
   };
 
   console.log(`loki — connected to ${state.config.baseUrl}`);
+  if (workspaceConfig) {
+    console.log(`Workspace: ${workspaceConfig.workspace.root} (autoApprove: ${workspaceConfig.workspace.autoApprove})`);
+  }
   console.log(`Type /help for commands, /exit to quit.\n`);
   console.log(`Active profile: ${state.agent.name} (${state.agent.model})\n`);
 
@@ -137,7 +157,7 @@ export async function runChatLoop(config: Config): Promise<void> {
       if (result === "exit") break;
       if (result === "continue") continue;
 
-      await sendMessage(state, userInput);
+      await sendMessage(state, userInput, rl);
     }
   } finally {
     rl.close();

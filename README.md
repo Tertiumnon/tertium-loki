@@ -158,12 +158,14 @@ Stored at `~/.loki/config.json`:
 
 Edit it by hand, or re-run `loki init` / `loki config`.
 
-## Tools (internet access)
+## Tools
+
+### Internet Access
 
 Local models have no internet access by default — they can only answer from
 what they learned during training, so anything time-sensitive (weather, current
 events) either gets refused or hallucinated. `loki` gives every agent two
-built-in tools it can call mid-conversation, the same ReAct-style loop Claude
+built-in web tools it can call mid-conversation, the same ReAct-style loop Claude
 Code itself uses for `WebFetch`:
 
 - **`get_weather(location)`** — current conditions via
@@ -193,6 +195,40 @@ testing, while `qwen2.5-coder:7b` sometimes emitted the tool call as plain text
 instead of a structured call. If a tool doesn't seem to fire, try `/agent
 general` (or whichever profile uses your strongest general-purpose model).
 
+### File Operations (Workspace)
+
+If you create a `.loki/settings.yml` file in a project directory, `loki` will
+automatically load it and give agents file-read/write capabilities—the same safe
+pattern Claude Code uses for local context with approval gates. Configuration example:
+
+```yaml
+workspace:
+  root: "."  # Base path; all ops confined here
+  allowedGlobs:
+    - "src/**"
+    - "lib/**"
+    - "*.json"
+    - "*.md"
+  deniedGlobs:
+    - "node_modules/**"
+    - ".git/**"
+  autoApprove: true  # If true, writes auto-execute without per-command confirmation
+```
+
+Once configured, agents can call:
+
+- **`read_file(path)`** — read a file.
+- **`write_file(path, content)`** — create or overwrite a file.
+- **`list_files(path)`** — list directory contents.
+- **`delete_file(path)`** — delete a file or folder.
+- **`move_file(from, to)`** — rename or move.
+- **`create_folder(path)`** — create a directory.
+
+All paths are validated against `allowedGlobs` / `deniedGlobs` before executing — the
+model can never escape the workspace root or touch forbidden paths, even if it tries.
+If `autoApprove` is `false` (or omitted, default), write/delete operations prompt in
+chat before executing: `Approve write_file(...)? (y/N):`.
+
 ## How it works
 
 `loki` talks directly to Ollama's native HTTP API:
@@ -219,6 +255,10 @@ src/
     web-tools.ts                    get_weather / fetch_url tool implementations
     web-tools.types.ts
     web-tools.constants.ts
+  workspace/
+    workspace.ts                    file tools + workspace config loading
+    workspace.types.ts
+    workspace.constants.ts
   config/
     config.ts                       read/write ~/.loki/config.json
     config.types.ts
