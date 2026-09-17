@@ -1,0 +1,28 @@
+# Example workspace configuration for loki
+# Copy to .loki/settings.yml in any project directory where loki runs to enable file tools
+
+workspace:
+  # Base directory (relative paths are resolved from here)
+  root: "."
+
+  # Glob patterns — agents can read/write/delete files matching these
+  # Supports *, **, ? and character classes like standard glob patterns
+  allowedGlobs:
+    - "src/**"
+    - "lib/**"
+    - "docs/**"
+    - "*.json"
+    - "*.md"
+    - "*.ts"
+    - "*.js"
+
+  # Patterns explicitly forbidden (takes precedence over allowedGlobs)
+  deniedGlobs:
+    - "node_modules/**"
+    - ".git/**"
+    - ".env"
+    - "secrets/**"
+
+  # If true: write/delete/move operations execute without per-command confirmation
+  # If false or omitted: each write/delete/move prompts "Approve X? (y/N):" in chat
+  autoApprove: false
