@@ -18,8 +18,12 @@
 
 **loki** — a terminal chat CLI for your local [Ollama](https://ollama.com) models.
 Type `loki`, pick an agent, chat. Like Claude Code's or GitHub Copilot's CLI, but
-100% local: no cloud calls, no API keys, no Python — just Node/TypeScript talking
-straight to Ollama's HTTP API.
+100% local: no cloud calls, no API keys — just Node/TypeScript talking straight to
+Ollama's HTTP API.
+
+> ⚠️ **DEVELOPMENT**: This project is under active development. Features and APIs
+> may change. Contributions and feedback welcome.
+> [GitHub Issues](https://github.com/Tertiumnon/tertium-loki/issues)
 
 ## Why
 
