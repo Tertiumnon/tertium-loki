@@ -10,6 +10,7 @@ export interface ChatState {
   agent: AgentProfile;
   messages: ChatMessage[];
   workspaceConfig?: WorkspaceConfig;
+  agentsGuide?: string;
 }
 
 export type CommandResult = "continue" | "exit";

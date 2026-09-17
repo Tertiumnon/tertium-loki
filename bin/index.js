@@ -322,6 +322,19 @@ var require_brace_expansion = __commonJS(function(exports, module) {
 import { stdin as stdin2, stdout as stdout2 } from "node:process";
 import { createInterface as createInterface2 } from "node:readline/promises";
 
+// src/agents-guide/agents-guide.ts
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+var AGENTS_MD_FILENAME = "AGENTS.md";
+async function loadAgentsGuide(cwd = process.cwd()) {
+  const filePath = resolve(cwd, AGENTS_MD_FILENAME);
+  try {
+    return await readFile(filePath, "utf-8");
+  } catch {
+    return null;
+  }
+}
+
 // src/ollama-client/ollama-client.ts
 var MAX_TOOL_ROUNDS = 5;
 async function listModelsDetailed(baseUrl) {
@@ -431,7 +444,7 @@ import { createInterface } from "node:readline/promises";
 
 // src/config/config.ts
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile as readFile2, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -450,7 +463,7 @@ function configExists(configDir = defaultConfigDir()) {
   return existsSync(getConfigPath(configDir));
 }
 async function loadConfig(configDir = defaultConfigDir()) {
-  const raw = await readFile(getConfigPath(configDir), "utf-8");
+  const raw = await readFile2(getConfigPath(configDir), "utf-8");
   return JSON.parse(raw);
 }
 async function saveConfig(config, configDir = defaultConfigDir()) {
@@ -723,8 +736,8 @@ var BUILTIN_TOOLS = [
 ];
 
 // src/workspace/workspace.ts
-import { readdir, readFile as readFile2, writeFile as writeFile2 } from "node:fs/promises";
-import { relative, resolve } from "node:path";
+import { readdir, readFile as readFile3, writeFile as writeFile2 } from "node:fs/promises";
+import { relative, resolve as resolve2 } from "node:path";
 
 // node_modules/minimatch/dist/esm/index.js
 var import_brace_expansion = __toESM(require_brace_expansion(), 1);
@@ -2209,9 +2222,9 @@ function parseSimpleYaml(content) {
   return result;
 }
 async function loadWorkspaceConfig(cwd = process.cwd()) {
-  const configPath = resolve(cwd, WORKSPACE_CONFIG_FILENAME);
+  const configPath = resolve2(cwd, WORKSPACE_CONFIG_FILENAME);
   try {
-    const content = await readFile2(configPath, "utf-8");
+    const content = await readFile3(configPath, "utf-8");
     const parsed = parseSimpleYaml(content);
     const workspace = parsed.workspace;
     if (!workspace)
@@ -2229,8 +2242,8 @@ async function loadWorkspaceConfig(cwd = process.cwd()) {
   }
 }
 function isPathAllowed(filePath, config) {
-  const root = resolve(config.workspace.root);
-  const fullPath = resolve(filePath);
+  const root = resolve2(config.workspace.root);
+  const fullPath = resolve2(filePath);
   if (!fullPath.startsWith(root)) {
     return false;
   }
@@ -2254,7 +2267,7 @@ function validatePath(filePath, config) {
 }
 async function readFileContent(filePath, config) {
   validatePath(filePath, config);
-  return readFile2(filePath, "utf-8");
+  return readFile3(filePath, "utf-8");
 }
 async function writeFileContent(filePath, content, config) {
   validatePath(filePath, config);
@@ -2520,9 +2533,22 @@ async function dispatchCommand(rl, state, input) {
   const handler = commands[command];
   return handler ? handler(rl, state, rest.join(" ")) : undefined;
 }
+function buildSystemPrompt(state) {
+  const parts = [];
+  if (state.agentsGuide) {
+    parts.push(state.agentsGuide);
+  }
+  if (state.agent.systemPrompt) {
+    parts.push(state.agent.systemPrompt);
+  }
+  return parts.join(`
+
+`);
+}
 async function sendMessage(state, content, rl) {
   state.messages.push({ role: "user", content });
-  const outgoing = state.agent.systemPrompt ? [{ role: "system", content: state.agent.systemPrompt }, ...state.messages] : state.messages;
+  const systemPrompt = buildSystemPrompt(state);
+  const outgoing = systemPrompt ? [{ role: "system", content: systemPrompt }, ...state.messages] : state.messages;
   let allTools = [...BUILTIN_TOOLS];
   if (state.workspaceConfig) {
     const approvalHandler = async (approval) => {
@@ -2554,13 +2580,18 @@ ${ANSI_GRAY}[calling ${name}(${JSON.stringify(args)})]${ANSI_RESET}
 async function runChatLoop(config) {
   const rl = createInterface2({ input: stdin2, output: stdout2 });
   const workspaceConfig = await loadWorkspaceConfig();
+  const agentsGuide = await loadAgentsGuide();
   const state = {
     config,
     agent: config.agents.find((a) => a.name === config.defaultAgent) ?? config.agents[0],
     messages: [],
-    workspaceConfig: workspaceConfig ?? undefined
+    workspaceConfig: workspaceConfig ?? undefined,
+    agentsGuide: agentsGuide ?? undefined
   };
   console.log(`loki — connected to ${state.config.baseUrl}`);
+  if (agentsGuide) {
+    console.log(`Loaded AGENTS.md (${agentsGuide.length} chars)`);
+  }
   if (workspaceConfig) {
     console.log(`Workspace: ${workspaceConfig.workspace.root} (autoApprove: ${workspaceConfig.workspace.autoApprove})`);
   }

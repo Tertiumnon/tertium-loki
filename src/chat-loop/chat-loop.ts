@@ -1,5 +1,6 @@
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
+import { loadAgentsGuide } from "../agents-guide/agents-guide";
 import type { Config } from "../config/config.types";
 import { chatWithTools, listModels } from "../ollama-client/ollama-client";
 import type { ChatMessage, ToolDefinition } from "../ollama-client/ollama-client.types";
@@ -82,11 +83,26 @@ async function dispatchCommand(rl: Readline, state: ChatState, input: string): P
   return handler ? handler(rl, state, rest.join(" ")) : undefined;
 }
 
+function buildSystemPrompt(state: ChatState): string {
+  const parts: string[] = [];
+
+  if (state.agentsGuide) {
+    parts.push(state.agentsGuide);
+  }
+
+  if (state.agent.systemPrompt) {
+    parts.push(state.agent.systemPrompt);
+  }
+
+  return parts.join("\n\n");
+}
+
 async function sendMessage(state: ChatState, content: string, rl: Readline): Promise<void> {
   state.messages.push({ role: "user", content });
 
-  const outgoing: ChatMessage[] = state.agent.systemPrompt
-    ? [{ role: "system", content: state.agent.systemPrompt }, ...state.messages]
+  const systemPrompt = buildSystemPrompt(state);
+  const outgoing: ChatMessage[] = systemPrompt
+    ? [{ role: "system", content: systemPrompt }, ...state.messages]
     : state.messages;
 
   let allTools: ToolDefinition[] = [...BUILTIN_TOOLS];
@@ -127,15 +143,20 @@ export async function runChatLoop(config: Config): Promise<void> {
   const rl = createInterface({ input: stdin, output: stdout });
 
   const workspaceConfig = await loadWorkspaceConfig();
+  const agentsGuide = await loadAgentsGuide();
 
   const state: ChatState = {
     config,
     agent: config.agents.find((a) => a.name === config.defaultAgent) ?? config.agents[0],
     messages: [],
     workspaceConfig: workspaceConfig ?? undefined,
+    agentsGuide: agentsGuide ?? undefined,
   };
 
   console.log(`loki — connected to ${state.config.baseUrl}`);
+  if (agentsGuide) {
+    console.log(`Loaded AGENTS.md (${agentsGuide.length} chars)`);
+  }
   if (workspaceConfig) {
     console.log(`Workspace: ${workspaceConfig.workspace.root} (autoApprove: ${workspaceConfig.workspace.autoApprove})`);
   }

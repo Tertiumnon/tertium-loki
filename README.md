@@ -141,6 +141,29 @@ You (coder): /exit
 | `/help` | show commands |
 | `/exit`, `/quit` | leave chat |
 
+## Project Instructions (AGENTS.md)
+
+If an `AGENTS.md` file exists in the current directory, `loki` will load it and
+prepend its contents to every agent's system prompt. This lets you provide
+project-specific context, conventions, or instructions that apply to all agents.
+
+Example `AGENTS.md`:
+
+```markdown
+# Project-Wide Instructions
+
+- Use TypeScript with strict type checking.
+- For API responses, always validate and handle errors.
+- Prefer composition over inheritance.
+- Keep functions under 20 lines.
+- File structure follows the tertium-* pattern: each module in its own folder
+  with logic, types, and constants split out.
+```
+
+This is read on startup and prepended before any agent-specific system prompt,
+so project instructions apply globally while agent system prompts can still
+specialize per role (coding vs. general vs. vision).
+
 ## Config
 
 Stored at `~/.loki/config.json`:
