@@ -5,7 +5,7 @@
     "": {
       "name": "@tertium/loki",
       "dependencies": {
-        "@tertium/js": "^2.7.3",
+        "@tertium/js": "^2.9.0",
         "minimatch": "^9.0.3",
       },
       "devDependencies": {
@@ -35,7 +35,7 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.5.13", "", { "os": "win32", "cpu": "x64" }, "sha512-VOofU/nW761XWzUeUNE8zzYNyPrxuMuNFMizL0qz7J75yeV8N7WFheUlk1/K6dOkaFpH9wJ+lDKlwjAbw0346w=="],
 
-    "@tertium/js": ["@tertium/js@2.7.3", "", {}, "sha512-gXpDovNkx6+3RrxYst8u1LdMwvMjec9qQD4xfwqyx2UrNadxD7LfsfajjRA/IfO/HCaWOFZk+0Vzo/VpwR2u8A=="],
+    "@tertium/js": ["@tertium/js@2.9.0", "", {}, "sha512-rpVA17KcTYOm7wa/UmDpacwKjGolxzl1nJd52qV4RBkECNyLg1Nvl2nHRUvR2+dhX3cEoR2JU4ORZdXKtdQmcg=="],
 
     "@types/bun": ["@types/bun@1.4.2", "", { "dependencies": { "bun-types": "1.4.2" } }, "sha512-GimotNn7+ZV0uVArItBbriZsR1oNf0+WTzPkdcFrzShI7k2norL0uzEaJT8T33dWr7O/c9ZDuAFQrctKCi72oQ=="],
 
