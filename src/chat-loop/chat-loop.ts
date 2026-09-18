@@ -24,29 +24,29 @@ function createSpinner(): Spinner {
   let frame = 0;
   let drawn = false;
 
-  const erase = (): void => {
-    if (drawn) {
-      process.stdout.write("\b \b");
-      drawn = false;
-    }
+  // Each tick overwrites the previous glyph in place with a single write (backspace + new
+  // char) — erasing to a blank first and redrawing after would flash blank/glyph every tick.
+  const draw = (): void => {
+    process.stdout.write(`${drawn ? "\b" : ""}${ANSI_GRAY}${SPINNER_FRAMES[frame]}${ANSI_RESET}`);
+    drawn = true;
+    frame = (frame + 1) % SPINNER_FRAMES.length;
   };
 
   return {
     start(): void {
       if (!isInteractive || timer) return;
-      timer = setInterval(() => {
-        erase();
-        process.stdout.write(`${ANSI_GRAY}${SPINNER_FRAMES[frame]}${ANSI_RESET}`);
-        drawn = true;
-        frame = (frame + 1) % SPINNER_FRAMES.length;
-      }, SPINNER_INTERVAL_MS);
+      draw();
+      timer = setInterval(draw, SPINNER_INTERVAL_MS);
     },
     stop(): void {
       if (timer) {
         clearInterval(timer);
         timer = undefined;
       }
-      erase();
+      if (drawn) {
+        process.stdout.write("\b \b");
+        drawn = false;
+      }
     },
   };
 }
