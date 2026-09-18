@@ -349,7 +349,8 @@ var package_default = {
     prepublishOnly: "bun run typecheck && bun run test && bun run build",
     "release:patch": "bun node_modules/@tertium/js/scripts/release.js patch",
     "release:minor": "bun node_modules/@tertium/js/scripts/release.js minor",
-    "release:major": "bun node_modules/@tertium/js/scripts/release.js major"
+    "release:major": "bun node_modules/@tertium/js/scripts/release.js major",
+    prepare: "git config core.hooksPath .githooks"
   },
   bin: {
     loki: "./bin/index.js"
