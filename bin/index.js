@@ -1020,8 +1020,9 @@ var BUILTIN_TOOLS = [
 ];
 
 // src/workspace/workspace.ts
-import { readdir, readFile as readFile3, writeFile as writeFile2 } from "node:fs/promises";
-import { relative, resolve as resolve2 } from "node:path";
+import { existsSync as existsSync2 } from "node:fs";
+import { mkdir as mkdir2, readdir, readFile as readFile3, writeFile as writeFile2 } from "node:fs/promises";
+import { dirname, relative, resolve as resolve2 } from "node:path";
 
 // node_modules/minimatch/dist/esm/index.js
 var import_brace_expansion = __toESM(require_brace_expansion(), 1);
@@ -2440,6 +2441,27 @@ minimatch.unescape = unescape;
 var WORKSPACE_CONFIG_FILENAME = ".loki/settings.yml";
 
 // src/workspace/workspace.ts
+var DEFAULT_SETTINGS_YAML = `workspace:
+  # Base directory (relative paths are resolved from here)
+  root: "."
+
+  # Glob patterns — agents can read/write/delete files matching these.
+  # Supports *, **, ? and character classes like standard glob patterns.
+  allowedGlobs:
+    - "**/*"
+
+  # Patterns explicitly forbidden (takes precedence over allowedGlobs)
+  deniedGlobs:
+    - "node_modules/**"
+    - ".git/**"
+    - ".env"
+    - "**/*.env"
+    - "secrets/**"
+
+  # If true: write/delete/move operations execute without per-command confirmation.
+  # If false or omitted: each write/delete/move prompts "Approve X? (y/N):" in chat.
+  autoApprove: false
+`;
 function parseSimpleYaml(content) {
   const lines = content.split(`
 `);
@@ -2524,6 +2546,15 @@ async function loadWorkspaceConfig(cwd = process.cwd()) {
   } catch {
     return null;
   }
+}
+async function initWorkspaceConfig(cwd = process.cwd(), options = {}) {
+  const path = resolve2(cwd, WORKSPACE_CONFIG_FILENAME);
+  if (existsSync2(path) && !options.force) {
+    return { path, created: false };
+  }
+  await mkdir2(dirname(path), { recursive: true });
+  await writeFile2(path, DEFAULT_SETTINGS_YAML, "utf-8");
+  return { path, created: true };
 }
 function isPathAllowed(filePath, config) {
   const root = resolve2(config.workspace.root);
@@ -2758,7 +2789,8 @@ function printHelp(state) {
   console.log("  /which          show active profile");
   console.log("  /models         list models available on the server");
   console.log("  /reset          clear conversation history");
-  console.log("  /init, /config  re-run setup (rescans models, rebuild profiles)");
+  console.log("  /setup, /config re-run setup (rescans models, rebuild profiles)");
+  console.log("  /init           create .loki/settings.yml here to enable file tools");
   console.log("  /help           show this help");
   console.log("  /exit, /quit    leave chat");
 }
@@ -2799,7 +2831,7 @@ var commands = {
     }
     return "continue";
   },
-  "/init": async (rl, state) => {
+  "/setup": async (rl, state) => {
     console.log();
     state.config = await runSetupWizard(rl);
     state.agent = state.config.agents.find((a) => a.name === state.config.defaultAgent) ?? state.config.agents[0];
@@ -2808,10 +2840,20 @@ var commands = {
 `);
     return "continue";
   },
+  "/init": async (_rl, state) => {
+    const { path, created } = await initWorkspaceConfig();
+    if (created) {
+      console.log(`Created ${path}`);
+    } else {
+      console.log(`${path} already exists.`);
+    }
+    state.workspaceConfig = await loadWorkspaceConfig() ?? undefined;
+    return "continue";
+  },
   "/exit": async () => "exit",
   "/quit": async () => "exit"
 };
-commands["/config"] = commands["/init"];
+commands["/config"] = commands["/setup"];
 async function dispatchCommand(rl, state, input) {
   const [command, ...rest] = input.split(/\s+/);
   const handler = commands[command];
@@ -2908,8 +2950,19 @@ async function runChatLoop(config) {
 // src/index.ts
 async function main() {
   const command = process.argv[2];
-  if (command === "config" || command === "init") {
+  if (command === "setup" || command === "config") {
     await runSetupWizard();
+    return;
+  }
+  if (command === "init") {
+    const force = process.argv.includes("--force");
+    const { path, created } = await initWorkspaceConfig(process.cwd(), { force });
+    if (created) {
+      console.log(`Created ${path}`);
+      console.log(`Edit allowedGlobs/deniedGlobs/autoApprove to control what agents can read/write here.`);
+    } else {
+      console.log(`${path} already exists. Pass --force to overwrite it.`);
+    }
     return;
   }
   if (command === "--version" || command === "-v") {
@@ -2919,8 +2972,9 @@ async function main() {
   if (command === "--help" || command === "-h") {
     console.log("Usage:");
     console.log("  loki               start chatting (runs setup first time)");
-    console.log("  loki init          (re)run the setup wizard");
-    console.log("  loki config        alias for init");
+    console.log("  loki setup         (re)run the setup wizard (backend + model profiles)");
+    console.log("  loki config        alias for setup");
+    console.log("  loki init          create .loki/settings.yml here to enable file tools");
     console.log("  loki --version     print the installed version");
     return;
   }

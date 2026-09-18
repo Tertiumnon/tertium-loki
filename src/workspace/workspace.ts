@@ -1,9 +1,32 @@
-import { readdir, readFile, writeFile } from "node:fs/promises";
-import { relative, resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, relative, resolve } from "node:path";
 import { minimatch } from "minimatch";
 import type { ToolDefinition } from "../llm-client/llm-client.types";
 import { WORKSPACE_CONFIG_FILENAME } from "./workspace.constants";
 import type { PendingApproval, WorkspaceConfig } from "./workspace.types";
+
+const DEFAULT_SETTINGS_YAML = `workspace:
+  # Base directory (relative paths are resolved from here)
+  root: "."
+
+  # Glob patterns — agents can read/write/delete files matching these.
+  # Supports *, **, ? and character classes like standard glob patterns.
+  allowedGlobs:
+    - "**/*"
+
+  # Patterns explicitly forbidden (takes precedence over allowedGlobs)
+  deniedGlobs:
+    - "node_modules/**"
+    - ".git/**"
+    - ".env"
+    - "**/*.env"
+    - "secrets/**"
+
+  # If true: write/delete/move operations execute without per-command confirmation.
+  # If false or omitted: each write/delete/move prompts "Approve X? (y/N):" in chat.
+  autoApprove: false
+`;
 
 export function parseSimpleYaml(content: string): Record<string, unknown> {
   const lines = content.split("\n");
@@ -85,6 +108,28 @@ export async function loadWorkspaceConfig(cwd: string = process.cwd()): Promise<
   } catch {
     return null;
   }
+}
+
+export interface InitWorkspaceResult {
+  path: string;
+  created: boolean;
+}
+
+/** Scaffolds `.loki/settings.yml` in `cwd` with permissive defaults. Leaves an existing
+ *  file untouched unless `force` is set, so re-running this never silently discards edits. */
+export async function initWorkspaceConfig(
+  cwd: string = process.cwd(),
+  options: { force?: boolean } = {},
+): Promise<InitWorkspaceResult> {
+  const path = resolve(cwd, WORKSPACE_CONFIG_FILENAME);
+
+  if (existsSync(path) && !options.force) {
+    return { path, created: false };
+  }
+
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, DEFAULT_SETTINGS_YAML, "utf-8");
+  return { path, created: true };
 }
 
 export function isPathAllowed(filePath: string, config: WorkspaceConfig): boolean {

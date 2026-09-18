@@ -35,7 +35,7 @@ responses, and slash commands to switch between them mid-conversation.
 
 ## Requirements
 
-Pick one backend and have it running before `loki init`:
+Pick one backend and have it running before `loki setup`:
 
 - **llama.cpp** — `llama-server`, built and running somewhere reachable over
   HTTP (default `http://localhost:9931`), started in **router mode** so
@@ -72,7 +72,7 @@ bun link
 First run walks you through setup automatically; you can also trigger it explicitly:
 
 ```bash
-loki init
+loki setup
 ```
 
 It first asks which backend to use, then checks the connection and reads what
@@ -157,7 +157,8 @@ You (coder): /exit
 | `/which` | show the active profile |
 | `/models` | list models available on the llama.cpp server |
 | `/reset` | clear conversation history |
-| `/init`, `/config` | re-run setup without leaving chat (rescans models, rebuilds profiles) |
+| `/setup`, `/config` | re-run setup without leaving chat (rescans models, rebuilds profiles) |
+| `/init` | create `.loki/settings.yml` here to enable file tools |
 | `/help` | show commands |
 | `/exit`, `/quit` | leave chat |
 
@@ -187,7 +188,7 @@ specialize per role (coding vs. general vs. vision).
 ## Config
 
 Stored at `~/.loki/config.json`. One config = one backend (switch backends by
-re-running `loki init`, which overwrites it):
+re-running `loki setup`, which overwrites it):
 
 ```json
 {
@@ -204,7 +205,7 @@ re-running `loki init`, which overwrites it):
 With Ollama as the backend, `"backend"` is `"ollama"` and `model` values are
 Ollama tags (e.g. `"llama3.1:8b"`) instead of Hugging Face repo ids.
 
-Edit it by hand, or re-run `loki init` / `loki config`.
+Edit it by hand, or re-run `loki setup` / `loki config`.
 
 ## Tools
 
@@ -257,9 +258,23 @@ your strongest general-purpose model).
 
 ### File Operations (Workspace)
 
-If you create a `.loki/settings.yml` file in a project directory, `loki` will
-automatically load it and give agents file-read/write capabilities—the same safe
-pattern Claude Code uses for local context with approval gates. Configuration example:
+Agents get no file-read/write capabilities by default. Run `loki init` (or `/init`
+mid-chat) in a project directory to scaffold `.loki/settings.yml` there — the
+same safe pattern Claude Code uses for local context, with approval gates:
+
+```bash
+cd your-project
+loki init
+```
+
+```
+Created /path/to/your-project/.loki/settings.yml
+Edit allowedGlobs/deniedGlobs/autoApprove to control what agents can read/write here.
+```
+
+The generated file starts permissive (everything except `node_modules/`, `.git/`,
+`.env`, and `secrets/`) with `autoApprove: false`, so every write/delete/move still
+prompts for confirmation until you opt in. Tighten it to taste:
 
 ```yaml
 workspace:
@@ -274,6 +289,9 @@ workspace:
     - ".git/**"
   autoApprove: true  # If true, writes auto-execute without per-command confirmation
 ```
+
+`loki init` never overwrites an existing `.loki/settings.yml` — pass `--force` if
+you really want to reset it back to the generated defaults.
 
 Once configured, agents can call:
 
@@ -344,7 +362,7 @@ src/
     model-suggest.types.ts
     model-suggest.constants.ts
   setup-wizard/
-    setup-wizard.ts                 interactive first-run / /init flow
+    setup-wizard.ts                 interactive first-run / /setup flow
     setup-wizard.types.ts
   chat-loop/
     chat-loop.ts                    the REPL + slash-command dispatch table

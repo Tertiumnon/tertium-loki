@@ -1,8 +1,12 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { commands } from "./chat-loop";
 import type { ChatState, Readline } from "./chat-loop.types";
 
 const originalFetch = globalThis.fetch;
+const originalCwd = process.cwd();
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
@@ -25,7 +29,7 @@ function makeState(overrides: Partial<ChatState> = {}): ChatState {
   };
 }
 
-// None of the handlers exercised below touch `rl` (that's only /init), so a
+// None of the handlers exercised below touch `rl` (that's only /setup), so a
 // dummy is enough — `never` is assignable to the Readline parameter type.
 const noRl = undefined as unknown as Readline;
 
@@ -76,8 +80,42 @@ describe("/exit and /quit", () => {
 });
 
 describe("/config alias", () => {
-  test("is wired to the same handler as /init", () => {
-    expect(commands["/config"]).toBe(commands["/init"]);
+  test("is wired to the same handler as /setup", () => {
+    expect(commands["/config"]).toBe(commands["/setup"]);
+  });
+});
+
+describe("/init", () => {
+  let dir: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "loki-chat-loop-test-"));
+    process.chdir(dir);
+  });
+
+  afterEach(async () => {
+    process.chdir(originalCwd);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  test("scaffolds .loki/settings.yml in the current directory and loads it into state", async () => {
+    const state = makeState();
+    expect(state.workspaceConfig).toBeUndefined();
+
+    const result = await commands["/init"](noRl, state, "");
+
+    expect(result).toBe("continue");
+    expect(state.workspaceConfig?.workspace.autoApprove).toBe(false);
+  });
+
+  test("does not overwrite an existing settings file", async () => {
+    await commands["/init"](noRl, makeState(), "");
+    const settingsPath = join(dir, ".loki", "settings.yml");
+    await writeFile(settingsPath, 'workspace:\n  root: "."\n  allowedGlobs: []\n  autoApprove: true\n', "utf-8");
+
+    await commands["/init"](noRl, makeState(), "");
+
+    expect(await readFile(settingsPath, "utf-8")).toContain("autoApprove: true");
   });
 });
 

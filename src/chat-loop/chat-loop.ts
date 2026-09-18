@@ -6,7 +6,7 @@ import { BACKEND_LABELS, getClient } from "../llm-client/llm-client";
 import type { ChatMessage, ToolDefinition } from "../llm-client/llm-client.types";
 import { runSetupWizard } from "../setup-wizard/setup-wizard";
 import { BUILTIN_TOOLS } from "../web-tools/web-tools";
-import { createFileTools, loadWorkspaceConfig } from "../workspace/workspace";
+import { createFileTools, initWorkspaceConfig, loadWorkspaceConfig } from "../workspace/workspace";
 import type { PendingApproval } from "../workspace/workspace.types";
 import { ANSI_BLUE, ANSI_GRAY, ANSI_RESET } from "./chat-loop.constants";
 import type { ChatState, CommandHandler, CommandResult, Readline } from "./chat-loop.types";
@@ -18,7 +18,8 @@ function printHelp(state: ChatState): void {
   console.log("  /which          show active profile");
   console.log("  /models         list models available on the server");
   console.log("  /reset          clear conversation history");
-  console.log("  /init, /config  re-run setup (rescans models, rebuild profiles)");
+  console.log("  /setup, /config re-run setup (rescans models, rebuild profiles)");
+  console.log("  /init           create .loki/settings.yml here to enable file tools");
   console.log("  /help           show this help");
   console.log("  /exit, /quit    leave chat");
 }
@@ -63,7 +64,7 @@ export const commands: Record<string, CommandHandler> = {
     return "continue";
   },
 
-  "/init": async (rl, state) => {
+  "/setup": async (rl, state) => {
     console.log();
     state.config = await runSetupWizard(rl);
     state.agent = state.config.agents.find((a) => a.name === state.config.defaultAgent) ?? state.config.agents[0];
@@ -72,10 +73,21 @@ export const commands: Record<string, CommandHandler> = {
     return "continue";
   },
 
+  "/init": async (_rl, state) => {
+    const { path, created } = await initWorkspaceConfig();
+    if (created) {
+      console.log(`Created ${path}`);
+    } else {
+      console.log(`${path} already exists.`);
+    }
+    state.workspaceConfig = (await loadWorkspaceConfig()) ?? undefined;
+    return "continue";
+  },
+
   "/exit": async () => "exit",
   "/quit": async () => "exit",
 };
-commands["/config"] = commands["/init"];
+commands["/config"] = commands["/setup"];
 
 async function dispatchCommand(rl: Readline, state: ChatState, input: string): Promise<CommandResult | undefined> {
   const [command, ...rest] = input.split(/\s+/);
