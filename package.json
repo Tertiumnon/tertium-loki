@@ -1,7 +1,7 @@
 {
   "name": "@tertium/loki",
   "version": "0.1.0",
-  "description": "Terminal chat CLI for local Ollama models — Claude-Code-CLI style, Node/TypeScript",
+  "description": "Terminal chat CLI for local llama.cpp models — Claude-Code-CLI style, Node/TypeScript",
   "author": "Vitalii Balabanov",
   "email": "tertiumnon@gmail.com",
   "main": "bin/index.js",
@@ -27,7 +27,7 @@
   ],
   "keywords": [
     "cli",
-    "ollama",
+    "llama.cpp",
     "llm",
     "chat",
     "local-ai"

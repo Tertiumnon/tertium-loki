@@ -1,6 +1,6 @@
 import type { createInterface } from "node:readline/promises";
 import type { AgentProfile, Config } from "../config/config.types";
-import type { ChatMessage } from "../ollama-client/ollama-client.types";
+import type { ChatMessage } from "../llm-client/llm-client.types";
 import type { WorkspaceConfig } from "../workspace/workspace.types";
 
 export type Readline = ReturnType<typeof createInterface>;

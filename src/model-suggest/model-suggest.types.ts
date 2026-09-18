@@ -1,4 +1,4 @@
-import type { ModelInfo } from "../ollama-client/ollama-client.types";
+import type { ModelInfo } from "../llm-client/llm-client.types";
 
 export type Role = "general" | "coder" | "vision";
 

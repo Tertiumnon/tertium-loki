@@ -11,7 +11,8 @@ afterEach(() => {
 function makeState(overrides: Partial<ChatState> = {}): ChatState {
   return {
     config: {
-      baseUrl: "http://localhost:11434",
+      backend: "llamacpp",
+      baseUrl: "http://localhost:9931",
       defaultAgent: "general",
       agents: [
         { name: "general", model: "llama3.1:8b" },
@@ -83,7 +84,7 @@ describe("/config alias", () => {
 describe("/models", () => {
   test("continues normally after listing models from the server", async () => {
     globalThis.fetch = (async () =>
-      new Response(JSON.stringify({ models: [{ name: "llama3.1:8b" }] }), { status: 200 })) as unknown as typeof fetch;
+      new Response(JSON.stringify({ data: [{ id: "llama3.1:8b" }] }), { status: 200 })) as unknown as typeof fetch;
 
     const result = await commands["/models"](noRl, makeState(), "");
     expect(result).toBe("continue");

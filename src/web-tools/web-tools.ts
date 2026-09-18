@@ -1,4 +1,4 @@
-import type { ToolDefinition } from "../ollama-client/ollama-client.types";
+import type { ToolDefinition } from "../llm-client/llm-client.types";
 import {
   FETCH_URL_MAX_CHARS,
   OPEN_METEO_FORECAST_URL,

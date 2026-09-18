@@ -1,11 +1,11 @@
 import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { getConfigPath, saveConfig } from "../config/config";
-import type { AgentProfile, Config } from "../config/config.types";
+import type { AgentProfile, Backend, Config } from "../config/config.types";
+import { BACKEND_DEFAULT_URLS, BACKEND_LABELS, getClient } from "../llm-client/llm-client";
+import type { ModelInfo } from "../llm-client/llm-client.types";
 import { describeModel, isChatCapable, suggestForRole } from "../model-suggest/model-suggest";
 import { ROLE_DEFAULT_PROMPTS, ROLE_ORDER } from "../model-suggest/model-suggest.constants";
-import { listModelsDetailed } from "../ollama-client/ollama-client";
-import type { ModelInfo } from "../ollama-client/ollama-client.types";
 import type { Readline, RoleSuggestion } from "./setup-wizard.types";
 
 async function ask(rl: Readline, question: string, fallback = ""): Promise<string> {
@@ -35,15 +35,30 @@ export async function runSetupWizard(existingRl?: Readline, configDir?: string):
   console.log("loki setup\n");
 
   try {
-    const baseUrl = await ask(rl, `Ollama base URL [http://localhost:11434]: `, "http://localhost:11434");
+    console.log("Which backend do you want to use?");
+    console.log("  1. llama.cpp (default)");
+    console.log("  2. Ollama");
+    const backendChoice = await ask(rl, `Backend [1]: `, "1");
+    const backend: Backend = backendChoice.trim() === "2" ? "ollama" : "llamacpp";
+    const client = getClient(backend);
+    const label = BACKEND_LABELS[backend];
+    const defaultUrl = BACKEND_DEFAULT_URLS[backend];
+
+    const baseUrl = await ask(rl, `\n${label} base URL [${defaultUrl}]: `, defaultUrl);
 
     console.log(`\nChecking connection to ${baseUrl} ...`);
     let allModels: ModelInfo[];
     try {
-      allModels = await listModelsDetailed(baseUrl);
+      allModels = await client.listModelsDetailed(baseUrl);
     } catch (err) {
-      console.error(`\nCould not reach Ollama at ${baseUrl}.`);
-      console.error(`Make sure Ollama is running (e.g. "ollama serve", or check your service/WSL setup).`);
+      console.error(`\nCould not reach ${label} at ${baseUrl}.`);
+      if (backend === "ollama") {
+        console.error(`Make sure Ollama is running (e.g. "ollama serve", or check your service/WSL setup).`);
+      } else {
+        console.error(
+          `Make sure llama-server is running (e.g. "systemctl status llama-server", or check your WSL setup).`,
+        );
+      }
       console.error(`Underlying error: ${(err as Error).message}`);
       process.exit(1);
     }
@@ -52,13 +67,19 @@ export async function runSetupWizard(existingRl?: Readline, configDir?: string):
     const skipped = allModels.filter((m) => !isChatCapable(m));
 
     if (chatModels.length === 0) {
-      console.error(`No chat-capable models found at ${baseUrl}. Pull one first, e.g.: ollama pull llama3.1:8b`);
+      if (backend === "ollama") {
+        console.error(`No chat-capable models found at ${baseUrl}. Pull one first, e.g.: ollama pull llama3.1:8b`);
+      } else {
+        console.error(`No chat-capable models found at ${baseUrl}. Load one first, e.g. by hitting it once with`);
+        console.error(`that model's id in the "model" field of a /v1/chat/completions request (router mode`);
+        console.error(`auto-loads it).`);
+      }
       process.exit(1);
     }
 
-    // Everything below is derived live from what THIS Ollama server reports
-    // (capabilities, family, parameter size) — no model names are hardcoded,
-    // so this works the same whether Ollama runs on WSL, native Windows, macOS, or Linux.
+    // Everything below is derived live from what THIS server reports (capabilities,
+    // parameter size, ...) — no model names are hardcoded, so this works the same
+    // wherever the chosen backend runs.
     console.log(`\nFound ${allModels.length} model(s):`);
     chatModels.forEach((m, i) => {
       console.log(`  ${i + 1}. ${m.name.padEnd(22)} ${describeModel(m)}`);
@@ -122,7 +143,7 @@ export async function runSetupWizard(existingRl?: Readline, configDir?: string):
       }
     }
 
-    const config: Config = { baseUrl, defaultAgent, agents };
+    const config: Config = { backend, baseUrl, defaultAgent, agents };
     await saveConfig(config, configDir);
 
     console.log(`\nSaved config to ${getConfigPath(configDir)}`);

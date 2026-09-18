@@ -1,7 +1,7 @@
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { relative, resolve } from "node:path";
 import { minimatch } from "minimatch";
-import type { ToolDefinition } from "../ollama-client/ollama-client.types";
+import type { ToolDefinition } from "../llm-client/llm-client.types";
 import { WORKSPACE_CONFIG_FILENAME } from "./workspace.constants";
 import type { PendingApproval, WorkspaceConfig } from "./workspace.types";
 

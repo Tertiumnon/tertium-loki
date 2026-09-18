@@ -2,8 +2,8 @@ import { stdin, stdout } from "node:process";
 import { createInterface } from "node:readline/promises";
 import { loadAgentsGuide } from "../agents-guide/agents-guide";
 import type { Config } from "../config/config.types";
-import { chatWithTools, listModels } from "../ollama-client/ollama-client";
-import type { ChatMessage, ToolDefinition } from "../ollama-client/ollama-client.types";
+import { BACKEND_LABELS, getClient } from "../llm-client/llm-client";
+import type { ChatMessage, ToolDefinition } from "../llm-client/llm-client.types";
 import { runSetupWizard } from "../setup-wizard/setup-wizard";
 import { BUILTIN_TOOLS } from "../web-tools/web-tools";
 import { createFileTools, loadWorkspaceConfig } from "../workspace/workspace";
@@ -16,7 +16,7 @@ function printHelp(state: ChatState): void {
   console.log("Commands:");
   console.log(`  /agent <name>   switch active profile: ${names}`);
   console.log("  /which          show active profile");
-  console.log("  /models         list models available on the Ollama server");
+  console.log("  /models         list models available on the server");
   console.log("  /reset          clear conversation history");
   console.log("  /init, /config  re-run setup (rescans models, rebuild profiles)");
   console.log("  /help           show this help");
@@ -42,7 +42,7 @@ export const commands: Record<string, CommandHandler> = {
 
   "/models": async (_rl, state) => {
     try {
-      const models = await listModels(state.config.baseUrl);
+      const models = await getClient(state.config.backend).listModels(state.config.baseUrl);
       console.log(`Models on server:\n  ${models.join("\n  ")}`);
     } catch (err) {
       console.error(`Failed to list models: ${(err as Error).message}`);
@@ -119,7 +119,7 @@ async function sendMessage(state: ChatState, content: string, rl: Readline): Pro
 
   process.stdout.write(`${ANSI_BLUE}${state.agent.name}${ANSI_RESET}: `);
   try {
-    const reply = await chatWithTools(
+    const reply = await getClient(state.config.backend).chatWithTools(
       state.config.baseUrl,
       state.agent.model,
       outgoing,
@@ -153,7 +153,7 @@ export async function runChatLoop(config: Config): Promise<void> {
     agentsGuide: agentsGuide ?? undefined,
   };
 
-  console.log(`loki — connected to ${state.config.baseUrl}`);
+  console.log(`loki — connected to ${BACKEND_LABELS[state.config.backend]} at ${state.config.baseUrl}`);
   if (agentsGuide) {
     console.log(`Loaded AGENTS.md (${agentsGuide.length} chars)`);
   }

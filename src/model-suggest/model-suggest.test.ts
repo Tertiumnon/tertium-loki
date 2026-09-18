@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ModelInfo } from "../ollama-client/ollama-client.types";
+import type { ModelInfo } from "../llm-client/llm-client.types";
 import { classify, describeModel, isChatCapable, suggestForRole } from "./model-suggest";
 
 function model(overrides: Partial<ModelInfo> = {}): ModelInfo {

@@ -22,7 +22,8 @@ describe("config", () => {
 
   test("save then load round-trips the config", async () => {
     const config: Config = {
-      baseUrl: "http://localhost:11434",
+      backend: "llamacpp",
+      baseUrl: "http://localhost:9931",
       defaultAgent: "general",
       agents: [{ name: "general", model: "llama3.1:8b", systemPrompt: "Be helpful." }],
     };
@@ -35,7 +36,7 @@ describe("config", () => {
 
   test("saveConfig creates the directory if it doesn't exist yet", async () => {
     const nested = join(dir, "nested");
-    await saveConfig({ baseUrl: "http://x", defaultAgent: "a", agents: [] }, nested);
+    await saveConfig({ backend: "llamacpp", baseUrl: "http://x", defaultAgent: "a", agents: [] }, nested);
     expect(configExists(nested)).toBe(true);
   });
 

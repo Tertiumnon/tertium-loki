@@ -1,16 +1,10 @@
-export interface ChatMessage {
-  role: "system" | "user" | "assistant" | "tool";
-  content: string;
+import type { ChatMessage } from "../llm-client/llm-client.types";
+
+/** The richer message shape used internally to build conversation history for the wire —
+ *  callers only ever pass/receive plain ChatMessage; tool plumbing stays in here. */
+export interface WireMessage extends ChatMessage {
   tool_calls?: OllamaToolCall[];
   tool_name?: string;
-}
-
-export interface ModelInfo {
-  name: string;
-  family: string;
-  parameterSize: string;
-  contextLength?: number;
-  capabilities: string[];
 }
 
 export interface OllamaTagsModel {
@@ -47,12 +41,4 @@ export interface OllamaChatStreamChunk {
   message?: { content?: string; tool_calls?: OllamaToolCall[] };
   done?: boolean;
   error?: string;
-}
-
-/** A tool the model can call mid-conversation, e.g. get_weather or fetch_url. */
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  parameters: Record<string, unknown>;
-  execute: (args: Record<string, unknown>) => Promise<string>;
 }

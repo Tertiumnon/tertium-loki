@@ -31,28 +31,32 @@ function fakeReadline(answers: string[]): Readline {
   } as unknown as Readline;
 }
 
-function mockOllamaTags(models: Array<{ name: string; capabilities?: string[]; parameter_size?: string }>): void {
+function mockModelsEndpoint(models: Array<{ name: string; nParams?: number }>): void {
   globalThis.fetch = (async () =>
     new Response(
       JSON.stringify({
-        models: models.map((m) => ({
-          name: m.name,
-          details: { parameter_size: m.parameter_size ?? "7B" },
-          capabilities: m.capabilities ?? ["completion"],
+        data: models.map((m) => ({
+          id: m.name,
+          ...(m.nParams ? { meta: { n_params: m.nParams } } : {}),
         })),
       }),
       { status: 200 },
     )) as unknown as typeof fetch;
 }
 
+function mockOllamaModelsEndpoint(models: Array<{ name: string }>): void {
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({ models: models.map((m) => ({ name: m.name, capabilities: ["completion"] })) }), {
+      status: 200,
+    })) as unknown as typeof fetch;
+}
+
 describe("runSetupWizard", () => {
   test("accepts suggested general + coder profiles and persists them", async () => {
-    mockOllamaTags([
-      { name: "llama3.1:8b", parameter_size: "8.0B" },
-      { name: "qwen2.5-coder:7b", parameter_size: "7.6B", capabilities: ["completion", "insert"] },
-    ]);
+    mockModelsEndpoint([{ name: "llama3.1:8b" }, { name: "qwen2.5-coder:7b" }]);
 
     const rl = fakeReadline([
+      "", // backend -> default (llama.cpp)
       "", // base URL -> default
       "", // accept 'general' suggestion
       "", // profile name -> default "general"
@@ -66,6 +70,7 @@ describe("runSetupWizard", () => {
 
     const config = await runSetupWizard(rl, dir);
 
+    expect(config.backend).toBe("llamacpp");
     expect(config.agents.map((a) => a.name)).toEqual(["general", "coder"]);
     expect(config.agents[0].model).toBe("llama3.1:8b");
     expect(config.agents[1].model).toBe("qwen2.5-coder:7b");
@@ -75,9 +80,10 @@ describe("runSetupWizard", () => {
   });
 
   test("declining the only suggestion falls through to a manual pick", async () => {
-    mockOllamaTags([{ name: "only-model:7b" }]);
+    mockModelsEndpoint([{ name: "only-model:7b" }]);
 
     const rl = fakeReadline([
+      "", // backend -> default
       "", // base URL
       "n", // decline the 'general' suggestion
       "1", // manual pick: model #1
@@ -94,9 +100,10 @@ describe("runSetupWizard", () => {
   });
 
   test("lets you override the suggested profile name and system prompt", async () => {
-    mockOllamaTags([{ name: "llama3.1:8b", parameter_size: "8.0B" }]);
+    mockModelsEndpoint([{ name: "llama3.1:8b" }]);
 
     const rl = fakeReadline([
+      "", // backend -> default
       "",
       "", // accept suggestion
       "my-assistant", // custom name
@@ -108,5 +115,24 @@ describe("runSetupWizard", () => {
 
     expect(config.agents[0].name).toBe("my-assistant");
     expect(config.agents[0].systemPrompt).toBe("You only speak in haiku.");
+  });
+
+  test("picking '2' selects the Ollama backend and its default URL", async () => {
+    mockOllamaModelsEndpoint([{ name: "llama3.1:8b" }]);
+
+    const rl = fakeReadline([
+      "2", // backend -> Ollama
+      "", // base URL -> default (Ollama's)
+      "", // accept 'general' suggestion
+      "", // profile name -> default "general"
+      "", // system prompt -> role default
+      "n", // add another custom profile? no
+    ]);
+
+    const config = await runSetupWizard(rl, dir);
+
+    expect(config.backend).toBe("ollama");
+    expect(config.baseUrl).toBe("http://localhost:11434");
+    expect(config.agents[0].model).toBe("llama3.1:8b");
   });
 });

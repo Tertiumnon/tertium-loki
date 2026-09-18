@@ -32,6 +32,19 @@ var __toESM = (mod, isNodeMode, target) => {
   return to;
 };
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
+var __returnValue = (v) => v;
+function __exportSetter(name, newValue) {
+  this[name] = __returnValue.bind(null, newValue);
+}
+var __export = (target, all) => {
+  for (var name in all)
+    __defProp(target, name, {
+      get: all[name],
+      enumerable: true,
+      configurable: true,
+      set: __exportSetter.bind(all, name)
+    });
+};
 
 // node_modules/balanced-match/index.js
 var require_balanced_match = __commonJS(function(exports, module) {
@@ -335,9 +348,181 @@ async function loadAgentsGuide(cwd = process.cwd()) {
   }
 }
 
-// src/ollama-client/ollama-client.ts
+// src/llamacpp-client/llamacpp-client.ts
+var exports_llamacpp_client = {};
+__export(exports_llamacpp_client, {
+  chatStream: () => chatStream,
+  chatWithTools: () => chatWithTools,
+  checkConnection: () => checkConnection,
+  listModels: () => listModels,
+  listModelsDetailed: () => listModelsDetailed
+});
 var MAX_TOOL_ROUNDS = 5;
+var PARAM_SIZE_FROM_NAME = /(\d+(?:\.\d+)?)\s*[Bb](?![a-zA-Z])/;
+function formatParamSize(nParams) {
+  const billions = nParams / 1e9;
+  return `${Number.isInteger(billions) ? billions.toFixed(0) : billions.toFixed(1)}B`;
+}
+function deriveModelInfo(entry) {
+  const nameMatch = PARAM_SIZE_FROM_NAME.exec(entry.id);
+  const parameterSize = entry.meta?.n_params ? formatParamSize(entry.meta.n_params) : nameMatch ? `${nameMatch[1]}B` : "?";
+  const capabilities = ["completion"];
+  if (entry.architecture?.input_modalities?.includes("image")) {
+    capabilities.push("vision");
+  }
+  return {
+    name: entry.id,
+    family: "unknown",
+    parameterSize,
+    contextLength: entry.meta?.n_ctx_train,
+    capabilities
+  };
+}
 async function listModelsDetailed(baseUrl) {
+  const res = await fetch(`${baseUrl}/v1/models`);
+  if (!res.ok) {
+    throw new Error(`GET /v1/models failed: ${res.status} ${res.statusText}`);
+  }
+  const data = await res.json();
+  return (data.data ?? []).map(deriveModelInfo);
+}
+async function listModels(baseUrl) {
+  const models = await listModelsDetailed(baseUrl);
+  return models.map((m) => m.name);
+}
+async function checkConnection(baseUrl) {
+  await listModels(baseUrl);
+}
+function applyToolCallDelta(byIndex, delta) {
+  const existing = byIndex.get(delta.index);
+  if (!existing) {
+    byIndex.set(delta.index, {
+      id: delta.id ?? `call_${delta.index}`,
+      type: "function",
+      function: {
+        name: delta.function?.name ?? "",
+        arguments: delta.function?.arguments ?? ""
+      }
+    });
+    return;
+  }
+  if (delta.id)
+    existing.id = delta.id;
+  if (delta.function?.name)
+    existing.function.name = delta.function.name;
+  if (delta.function?.arguments)
+    existing.function.arguments += delta.function.arguments;
+}
+async function streamChat(baseUrl, model, messages, onToken, tools) {
+  const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, messages, stream: true, ...tools?.length ? { tools } : {} })
+  });
+  if (!res.ok || !res.body) {
+    throw new Error(`POST /v1/chat/completions failed: ${res.status} ${res.statusText}`);
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder;
+  let buffer = "";
+  let content = "";
+  const toolCallsByIndex = new Map;
+  const processLine = (line) => {
+    if (!line.startsWith("data:"))
+      return;
+    const payload = line.slice(5).trim();
+    if (!payload || payload === "[DONE]")
+      return;
+    const parsed = JSON.parse(payload);
+    if (parsed.error) {
+      throw new Error(typeof parsed.error === "string" ? parsed.error : parsed.error.message ?? "unknown error");
+    }
+    const delta = parsed.choices?.[0]?.delta;
+    if (!delta)
+      return;
+    if (delta.content) {
+      onToken(delta.content);
+      content += delta.content;
+    }
+    for (const tc of delta.tool_calls ?? []) {
+      applyToolCallDelta(toolCallsByIndex, tc);
+    }
+  };
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done)
+      break;
+    buffer += decoder.decode(value, { stream: true });
+    let newlineIndex = buffer.indexOf(`
+`);
+    while (newlineIndex !== -1) {
+      const line = buffer.slice(0, newlineIndex).trim();
+      buffer = buffer.slice(newlineIndex + 1);
+      if (line)
+        processLine(line);
+      newlineIndex = buffer.indexOf(`
+`);
+    }
+  }
+  if (buffer.trim())
+    processLine(buffer.trim());
+  return {
+    content,
+    toolCalls: [...toolCallsByIndex.values()].filter((tc) => tc.function.name)
+  };
+}
+async function chatStream(baseUrl, model, messages, onToken) {
+  const { content } = await streamChat(baseUrl, model, messages, onToken);
+  return content;
+}
+function parseToolArguments(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+async function chatWithTools(baseUrl, model, messages, tools, onToken, onToolCall) {
+  const openaiTools = tools.map((t) => ({
+    type: "function",
+    function: { name: t.name, description: t.description, parameters: t.parameters }
+  }));
+  const toolByName = new Map(tools.map((t) => [t.name, t]));
+  const history = [...messages];
+  for (let round = 0;round < MAX_TOOL_ROUNDS; round++) {
+    const { content, toolCalls } = await streamChat(baseUrl, model, history, onToken, openaiTools);
+    if (toolCalls.length === 0) {
+      return content;
+    }
+    history.push({ role: "assistant", content, tool_calls: toolCalls });
+    for (const call of toolCalls) {
+      const tool = toolByName.get(call.function.name);
+      const args = parseToolArguments(call.function.arguments);
+      onToolCall?.(call.function.name, args);
+      const result = tool ? await tool.execute(args).catch((err) => `Error: ${err.message}`) : `Error: unknown tool "${call.function.name}"`;
+      history.push({
+        role: "tool",
+        tool_call_id: call.id,
+        content: `Result: ${result}
+
+Answer the user's question directly using this result. Do not describe that you called a tool.`
+      });
+    }
+  }
+  return "(stopped after too many tool calls without a final answer)";
+}
+
+// src/ollama-client/ollama-client.ts
+var exports_ollama_client = {};
+__export(exports_ollama_client, {
+  chatStream: () => chatStream2,
+  chatWithTools: () => chatWithTools2,
+  checkConnection: () => checkConnection2,
+  listModels: () => listModels2,
+  listModelsDetailed: () => listModelsDetailed2
+});
+var MAX_TOOL_ROUNDS2 = 5;
+async function listModelsDetailed2(baseUrl) {
   const res = await fetch(`${baseUrl}/api/tags`);
   if (!res.ok) {
     throw new Error(`GET /api/tags failed: ${res.status} ${res.statusText}`);
@@ -351,11 +536,14 @@ async function listModelsDetailed(baseUrl) {
     capabilities: m.capabilities ?? []
   }));
 }
-async function listModels(baseUrl) {
-  const models = await listModelsDetailed(baseUrl);
+async function listModels2(baseUrl) {
+  const models = await listModelsDetailed2(baseUrl);
   return models.map((m) => m.name);
 }
-async function streamChat(baseUrl, model, messages, onToken, tools) {
+async function checkConnection2(baseUrl) {
+  await listModels2(baseUrl);
+}
+async function streamChat2(baseUrl, model, messages, onToken, tools) {
   const res = await fetch(`${baseUrl}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -399,7 +587,11 @@ async function streamChat(baseUrl, model, messages, onToken, tools) {
   }
   return { content, toolCalls };
 }
-function parseToolArguments(raw) {
+async function chatStream2(baseUrl, model, messages, onToken) {
+  const { content } = await streamChat2(baseUrl, model, messages, onToken);
+  return content;
+}
+function parseToolArguments2(raw) {
   if (typeof raw !== "string")
     return raw;
   try {
@@ -408,22 +600,22 @@ function parseToolArguments(raw) {
     return {};
   }
 }
-async function chatWithTools(baseUrl, model, messages, tools, onToken, onToolCall) {
+async function chatWithTools2(baseUrl, model, messages, tools, onToken, onToolCall) {
   const ollamaTools = tools.map((t) => ({
     type: "function",
     function: { name: t.name, description: t.description, parameters: t.parameters }
   }));
   const toolByName = new Map(tools.map((t) => [t.name, t]));
   const history = [...messages];
-  for (let round = 0;round < MAX_TOOL_ROUNDS; round++) {
-    const { content, toolCalls } = await streamChat(baseUrl, model, history, onToken, ollamaTools);
+  for (let round = 0;round < MAX_TOOL_ROUNDS2; round++) {
+    const { content, toolCalls } = await streamChat2(baseUrl, model, history, onToken, ollamaTools);
     if (toolCalls.length === 0) {
       return content;
     }
     history.push({ role: "assistant", content, tool_calls: toolCalls });
     for (const call of toolCalls) {
       const tool = toolByName.get(call.function.name);
-      const args = parseToolArguments(call.function.arguments);
+      const args = parseToolArguments2(call.function.arguments);
       onToolCall?.(call.function.name, args);
       const result = tool ? await tool.execute(args).catch((err) => `Error: ${err.message}`) : `Error: unknown tool "${call.function.name}"`;
       history.push({
@@ -437,6 +629,23 @@ Answer the user's question directly using this result. Do not describe that you 
   }
   return "(stopped after too many tool calls without a final answer)";
 }
+
+// src/llm-client/llm-client.ts
+var CLIENTS = {
+  ollama: exports_ollama_client,
+  llamacpp: exports_llamacpp_client
+};
+function getClient(backend) {
+  return CLIENTS[backend];
+}
+var BACKEND_LABELS = {
+  ollama: "Ollama",
+  llamacpp: "llama.cpp"
+};
+var BACKEND_DEFAULT_URLS = {
+  ollama: "http://localhost:11434",
+  llamacpp: "http://localhost:9931"
+};
 
 // src/setup-wizard/setup-wizard.ts
 import { stdin, stdout } from "node:process";
@@ -545,23 +754,42 @@ async function runSetupWizard(existingRl, configDir) {
   console.log(`loki setup
 `);
   try {
-    const baseUrl = await ask(rl, `Ollama base URL [http://localhost:11434]: `, "http://localhost:11434");
+    console.log("Which backend do you want to use?");
+    console.log("  1. llama.cpp (default)");
+    console.log("  2. Ollama");
+    const backendChoice = await ask(rl, `Backend [1]: `, "1");
+    const backend = backendChoice.trim() === "2" ? "ollama" : "llamacpp";
+    const client = getClient(backend);
+    const label = BACKEND_LABELS[backend];
+    const defaultUrl = BACKEND_DEFAULT_URLS[backend];
+    const baseUrl = await ask(rl, `
+${label} base URL [${defaultUrl}]: `, defaultUrl);
     console.log(`
 Checking connection to ${baseUrl} ...`);
     let allModels;
     try {
-      allModels = await listModelsDetailed(baseUrl);
+      allModels = await client.listModelsDetailed(baseUrl);
     } catch (err) {
       console.error(`
-Could not reach Ollama at ${baseUrl}.`);
-      console.error(`Make sure Ollama is running (e.g. "ollama serve", or check your service/WSL setup).`);
+Could not reach ${label} at ${baseUrl}.`);
+      if (backend === "ollama") {
+        console.error(`Make sure Ollama is running (e.g. "ollama serve", or check your service/WSL setup).`);
+      } else {
+        console.error(`Make sure llama-server is running (e.g. "systemctl status llama-server", or check your WSL setup).`);
+      }
       console.error(`Underlying error: ${err.message}`);
       process.exit(1);
     }
     const chatModels = allModels.filter(isChatCapable);
     const skipped = allModels.filter((m) => !isChatCapable(m));
     if (chatModels.length === 0) {
-      console.error(`No chat-capable models found at ${baseUrl}. Pull one first, e.g.: ollama pull llama3.1:8b`);
+      if (backend === "ollama") {
+        console.error(`No chat-capable models found at ${baseUrl}. Pull one first, e.g.: ollama pull llama3.1:8b`);
+      } else {
+        console.error(`No chat-capable models found at ${baseUrl}. Load one first, e.g. by hitting it once with`);
+        console.error(`that model's id in the "model" field of a /v1/chat/completions request (router mode`);
+        console.error(`auto-loads it).`);
+      }
       process.exit(1);
     }
     console.log(`
@@ -616,7 +844,7 @@ Default profile on startup [${defaultAgent}] (options: ${names}): `, defaultAgen
         defaultAgent = agents[0].name;
       }
     }
-    const config = { baseUrl, defaultAgent, agents };
+    const config = { backend, baseUrl, defaultAgent, agents };
     await saveConfig(config, configDir);
     console.log(`
 Saved config to ${getConfigPath(configDir)}`);
@@ -2472,7 +2700,7 @@ function printHelp(state) {
   console.log("Commands:");
   console.log(`  /agent <name>   switch active profile: ${names}`);
   console.log("  /which          show active profile");
-  console.log("  /models         list models available on the Ollama server");
+  console.log("  /models         list models available on the server");
   console.log("  /reset          clear conversation history");
   console.log("  /init, /config  re-run setup (rescans models, rebuild profiles)");
   console.log("  /help           show this help");
@@ -2494,7 +2722,7 @@ var commands = {
   },
   "/models": async (_rl, state) => {
     try {
-      const models = await listModels(state.config.baseUrl);
+      const models = await getClient(state.config.backend).listModels(state.config.baseUrl);
       console.log(`Models on server:
   ${models.join(`
   `)}`);
@@ -2561,7 +2789,7 @@ ${ANSI_GRAY}Approve ${approval.description}? (y/N): ${ANSI_RESET}`);
   }
   process.stdout.write(`${ANSI_BLUE}${state.agent.name}${ANSI_RESET}: `);
   try {
-    const reply = await chatWithTools(state.config.baseUrl, state.agent.model, outgoing, allTools, (token) => {
+    const reply = await getClient(state.config.backend).chatWithTools(state.config.baseUrl, state.agent.model, outgoing, allTools, (token) => {
       process.stdout.write(token);
     }, (name, args) => {
       process.stdout.write(`
@@ -2588,7 +2816,7 @@ async function runChatLoop(config) {
     workspaceConfig: workspaceConfig ?? undefined,
     agentsGuide: agentsGuide ?? undefined
   };
-  console.log(`loki — connected to ${state.config.baseUrl}`);
+  console.log(`loki — connected to ${BACKEND_LABELS[state.config.backend]} at ${state.config.baseUrl}`);
   if (agentsGuide) {
     console.log(`Loaded AGENTS.md (${agentsGuide.length} chars)`);
   }

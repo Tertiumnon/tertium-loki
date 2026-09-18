@@ -1,11 +1,10 @@
+import type { ChatMessage, ModelInfo, ToolDefinition } from "../llm-client/llm-client.types";
 import type {
-  ChatMessage,
-  ModelInfo,
   OllamaChatStreamChunk,
   OllamaTagsResponse,
   OllamaTool,
   OllamaToolCall,
-  ToolDefinition,
+  WireMessage,
 } from "./ollama-client.types";
 
 const MAX_TOOL_ROUNDS = 5;
@@ -144,7 +143,7 @@ export async function chatWithTools(
     function: { name: t.name, description: t.description, parameters: t.parameters },
   }));
   const toolByName = new Map(tools.map((t) => [t.name, t]));
-  const history = [...messages];
+  const history: WireMessage[] = [...messages];
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     const { content, toolCalls } = await streamChat(baseUrl, model, history, onToken, ollamaTools);

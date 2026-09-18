@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import type { ToolDefinition } from "../llm-client/llm-client.types";
 import { chatStream, chatWithTools, listModelsDetailed } from "./ollama-client";
-import type { ToolDefinition } from "./ollama-client.types";
 
 const originalFetch = globalThis.fetch;
 
