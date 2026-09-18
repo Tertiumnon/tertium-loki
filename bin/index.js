@@ -330,6 +330,60 @@ var require_brace_expansion = __commonJS(function(exports, module) {
     return acc;
   }
 });
+// package.json
+var package_default = {
+  name: "@tertium/loki",
+  version: "0.1.0",
+  description: "Terminal chat CLI for local llama.cpp models — Claude-Code-CLI style, Node/TypeScript",
+  author: "Vitalii Balabanov",
+  email: "tertiumnon@gmail.com",
+  main: "bin/index.js",
+  type: "module",
+  scripts: {
+    build: "bun build ./src/index.ts --outfile ./bin/index.js --target node",
+    start: "node bin/index.js",
+    test: "bun test",
+    typecheck: "tsc --noEmit",
+    lint: "biome check .",
+    format: "biome format --write .",
+    prepublishOnly: "bun run typecheck && bun run test && bun run build",
+    "release:patch": "bun node_modules/@tertium/js/scripts/release.js patch",
+    "release:minor": "bun node_modules/@tertium/js/scripts/release.js minor",
+    "release:major": "bun node_modules/@tertium/js/scripts/release.js major"
+  },
+  bin: {
+    loki: "./bin/index.js"
+  },
+  files: [
+    "bin",
+    "package.json"
+  ],
+  keywords: [
+    "cli",
+    "llama.cpp",
+    "llm",
+    "chat",
+    "local-ai"
+  ],
+  engines: {
+    node: ">=18.17"
+  },
+  dependencies: {
+    "@tertium/js": "^2.9.0",
+    minimatch: "^9.0.3"
+  },
+  devDependencies: {
+    "@biomejs/biome": "^2.5.13",
+    "@types/bun": "^1.4.2",
+    "@types/node": "^24.0.0",
+    typescript: "^5.6.0"
+  },
+  repository: {
+    type: "git",
+    url: "https://github.com/Tertiumnon/tertium-loki.git"
+  },
+  license: "MIT"
+};
 
 // src/chat-loop/chat-loop.ts
 import { stdin as stdin2, stdout as stdout2 } from "node:process";
@@ -673,7 +727,8 @@ function configExists(configDir = defaultConfigDir()) {
 }
 async function loadConfig(configDir = defaultConfigDir()) {
   const raw = await readFile2(getConfigPath(configDir), "utf-8");
-  return JSON.parse(raw);
+  const config = JSON.parse(raw);
+  return config.backend ? config : { ...config, backend: "ollama" };
 }
 async function saveConfig(config, configDir = defaultConfigDir()) {
   await mkdir(configDir, { recursive: true });
@@ -2856,12 +2911,21 @@ async function main() {
     await runSetupWizard();
     return;
   }
+  if (command === "--version" || command === "-v") {
+    console.log(package_default.version);
+    return;
+  }
   if (command === "--help" || command === "-h") {
     console.log("Usage:");
     console.log("  loki               start chatting (runs setup first time)");
     console.log("  loki init          (re)run the setup wizard");
     console.log("  loki config        alias for init");
+    console.log("  loki --version     print the installed version");
     return;
+  }
+  if (command?.startsWith("-")) {
+    console.error(`Unknown option '${command}'. Run "loki --help" for usage.`);
+    process.exit(1);
   }
   const config = configExists() ? await loadConfig() : await runSetupWizard();
   await runChatLoop(config);

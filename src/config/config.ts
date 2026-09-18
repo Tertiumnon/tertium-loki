@@ -20,7 +20,10 @@ export function configExists(configDir: string = defaultConfigDir()): boolean {
 
 export async function loadConfig(configDir: string = defaultConfigDir()): Promise<Config> {
   const raw = await readFile(getConfigPath(configDir), "utf-8");
-  return JSON.parse(raw) as Config;
+  const config = JSON.parse(raw) as Config;
+  // Configs saved before the llama.cpp/Ollama backend choice was introduced have no
+  // "backend" field — they were always Ollama, so default to that instead of erroring.
+  return config.backend ? config : { ...config, backend: "ollama" };
 }
 
 export async function saveConfig(config: Config, configDir: string = defaultConfigDir()): Promise<void> {

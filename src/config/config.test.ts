@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { configExists, getConfigPath, loadConfig, saveConfig } from "./config";
@@ -42,5 +42,21 @@ describe("config", () => {
 
   test("getConfigPath points at config.json inside the given directory", () => {
     expect(getConfigPath(dir)).toBe(join(dir, "config.json"));
+  });
+
+  test("loading a pre-backend-field config defaults backend to ollama", async () => {
+    await writeFile(
+      getConfigPath(dir),
+      JSON.stringify({
+        baseUrl: "http://localhost:11434",
+        defaultAgent: "general",
+        agents: [{ name: "general", model: "llama3.1:8b" }],
+      }),
+      "utf-8",
+    );
+
+    const config = await loadConfig(dir);
+    expect(config.backend).toBe("ollama");
+    expect(config.baseUrl).toBe("http://localhost:11434");
   });
 });
