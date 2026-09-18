@@ -164,14 +164,17 @@ describe("chatWithTools", () => {
         JSON.stringify({ message: { content: "", tool_calls: [{ function: { name: "loop", arguments: {} } }] } }),
       ])) as unknown as typeof fetch;
 
+    const tokens: string[] = [];
     const reply = await chatWithTools(
       "http://localhost:11434",
       "test-model",
       [],
       [fakeTool("loop", "again")],
-      () => {},
+      (token) => tokens.push(token),
     );
     expect(reply).toContain("too many tool calls");
+    // The fallback must reach onToken too, or the terminal never shows it (nothing was streamed).
+    expect(tokens.join("")).toContain("too many tool calls");
   });
 
   test("parses stringified JSON arguments as well as plain objects", async () => {

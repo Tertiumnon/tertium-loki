@@ -2789,29 +2789,27 @@ function createSpinner() {
   let timer;
   let frame = 0;
   let drawn = false;
-  const erase = () => {
-    if (drawn) {
-      process.stdout.write("\b \b");
-      drawn = false;
-    }
+  const draw = () => {
+    process.stdout.write(`${drawn ? "\b" : ""}${ANSI_GRAY}${SPINNER_FRAMES[frame]}${ANSI_RESET}`);
+    drawn = true;
+    frame = (frame + 1) % SPINNER_FRAMES.length;
   };
   return {
     start() {
       if (!isInteractive || timer)
         return;
-      timer = setInterval(() => {
-        erase();
-        process.stdout.write(`${ANSI_GRAY}${SPINNER_FRAMES[frame]}${ANSI_RESET}`);
-        drawn = true;
-        frame = (frame + 1) % SPINNER_FRAMES.length;
-      }, SPINNER_INTERVAL_MS);
+      draw();
+      timer = setInterval(draw, SPINNER_INTERVAL_MS);
     },
     stop() {
       if (timer) {
         clearInterval(timer);
         timer = undefined;
       }
-      erase();
+      if (drawn) {
+        process.stdout.write("\b \b");
+        drawn = false;
+      }
     }
   };
 }

@@ -226,5 +226,7 @@ export async function chatWithTools(
     }
   }
 
-  return "(stopped after too many tool calls without a final answer)";
+  const fallback = "(stopped after too many tool calls without a final answer)";
+  onToken(fallback);
+  return fallback;
 }

@@ -171,7 +171,12 @@ describe("chatWithTools", () => {
   test("stops after MAX_TOOL_ROUNDS if the model never gives a final answer", async () => {
     globalThis.fetch = (async () => sseResponse(toolCallDeltas("call_1", "loop", "{}"))) as unknown as typeof fetch;
 
-    const reply = await chatWithTools("http://localhost:9931", "test-model", [], [fakeTool("loop", "again")], () => {});
+    const tokens: string[] = [];
+    const reply = await chatWithTools("http://localhost:9931", "test-model", [], [fakeTool("loop", "again")], (token) =>
+      tokens.push(token),
+    );
     expect(reply).toContain("too many tool calls");
+    // The fallback must reach onToken too, or the terminal never shows it (nothing was streamed).
+    expect(tokens.join("")).toContain("too many tool calls");
   });
 });
