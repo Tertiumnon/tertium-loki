@@ -8,8 +8,48 @@ import { runSetupWizard } from "../setup-wizard/setup-wizard";
 import { BUILTIN_TOOLS } from "../web-tools/web-tools";
 import { createFileTools, initWorkspaceConfig, loadWorkspaceConfig } from "../workspace/workspace";
 import type { PendingApproval } from "../workspace/workspace.types";
-import { ANSI_BLUE, ANSI_GRAY, ANSI_RESET } from "./chat-loop.constants";
+import { ANSI_BLUE, ANSI_GRAY, ANSI_RESET, SPINNER_FRAMES, SPINNER_INTERVAL_MS } from "./chat-loop.constants";
 import type { ChatState, CommandHandler, CommandResult, Readline } from "./chat-loop.types";
+
+interface Spinner {
+  start: () => void;
+  stop: () => void;
+}
+
+/** Animated "waiting for a reply" indicator, drawn in place after the "name: " label.
+ *  A no-op outside a real TTY (piped output, tests) so it never corrupts non-interactive logs. */
+function createSpinner(): Spinner {
+  const isInteractive = process.stdout.isTTY === true;
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let frame = 0;
+  let drawn = false;
+
+  const erase = (): void => {
+    if (drawn) {
+      process.stdout.write("\b \b");
+      drawn = false;
+    }
+  };
+
+  return {
+    start(): void {
+      if (!isInteractive || timer) return;
+      timer = setInterval(() => {
+        erase();
+        process.stdout.write(`${ANSI_GRAY}${SPINNER_FRAMES[frame]}${ANSI_RESET}`);
+        drawn = true;
+        frame = (frame + 1) % SPINNER_FRAMES.length;
+      }, SPINNER_INTERVAL_MS);
+    },
+    stop(): void {
+      if (timer) {
+        clearInterval(timer);
+        timer = undefined;
+      }
+      erase();
+    },
+  };
+}
 
 function printHelp(state: ChatState): void {
   const names = state.config.agents.map((a) => a.name).join(", ");
@@ -130,6 +170,11 @@ async function sendMessage(state: ChatState, content: string, rl: Readline): Pro
   }
 
   process.stdout.write(`${ANSI_BLUE}${state.agent.name}${ANSI_RESET}: `);
+
+  const spinner = createSpinner();
+  spinner.start();
+  let atLineStart = false;
+
   try {
     const reply = await getClient(state.config.backend).chatWithTools(
       state.config.baseUrl,
@@ -137,15 +182,23 @@ async function sendMessage(state: ChatState, content: string, rl: Readline): Pro
       outgoing,
       allTools,
       (token) => {
+        spinner.stop();
         process.stdout.write(token);
+        atLineStart = token.endsWith("\n");
       },
       (name, args) => {
-        process.stdout.write(`\n${ANSI_GRAY}[calling ${name}(${JSON.stringify(args)})]${ANSI_RESET}\n`);
+        spinner.stop();
+        if (!atLineStart) process.stdout.write("\n");
+        process.stdout.write(`${ANSI_GRAY}[calling ${name}(${JSON.stringify(args)})]${ANSI_RESET}\n`);
+        atLineStart = true;
+        spinner.start();
       },
     );
+    spinner.stop();
     console.log("\n");
     state.messages.push({ role: "assistant", content: reply });
   } catch (err) {
+    spinner.stop();
     console.error(`\n[error] ${(err as Error).message}`);
     state.messages.pop();
   }

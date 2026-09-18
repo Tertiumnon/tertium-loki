@@ -2780,8 +2780,41 @@ function createFileTools(config, approvalHandler) {
 var ANSI_RESET = "\x1B[0m";
 var ANSI_GRAY = "\x1B[90m";
 var ANSI_BLUE = "\x1B[94m";
+var SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+var SPINNER_INTERVAL_MS = 80;
 
 // src/chat-loop/chat-loop.ts
+function createSpinner() {
+  const isInteractive = process.stdout.isTTY === true;
+  let timer;
+  let frame = 0;
+  let drawn = false;
+  const erase = () => {
+    if (drawn) {
+      process.stdout.write("\b \b");
+      drawn = false;
+    }
+  };
+  return {
+    start() {
+      if (!isInteractive || timer)
+        return;
+      timer = setInterval(() => {
+        erase();
+        process.stdout.write(`${ANSI_GRAY}${SPINNER_FRAMES[frame]}${ANSI_RESET}`);
+        drawn = true;
+        frame = (frame + 1) % SPINNER_FRAMES.length;
+      }, SPINNER_INTERVAL_MS);
+    },
+    stop() {
+      if (timer) {
+        clearInterval(timer);
+        timer = undefined;
+      }
+      erase();
+    }
+  };
+}
 function printHelp(state) {
   const names = state.config.agents.map((a) => a.name).join(", ");
   console.log("Commands:");
@@ -2886,18 +2919,31 @@ ${ANSI_GRAY}Approve ${approval.description}? (y/N): ${ANSI_RESET}`);
     allTools = [...allTools, ...fileTools];
   }
   process.stdout.write(`${ANSI_BLUE}${state.agent.name}${ANSI_RESET}: `);
+  const spinner = createSpinner();
+  spinner.start();
+  let atLineStart = false;
   try {
     const reply = await getClient(state.config.backend).chatWithTools(state.config.baseUrl, state.agent.model, outgoing, allTools, (token) => {
+      spinner.stop();
       process.stdout.write(token);
-    }, (name, args) => {
-      process.stdout.write(`
-${ANSI_GRAY}[calling ${name}(${JSON.stringify(args)})]${ANSI_RESET}
+      atLineStart = token.endsWith(`
 `);
+    }, (name, args) => {
+      spinner.stop();
+      if (!atLineStart)
+        process.stdout.write(`
+`);
+      process.stdout.write(`${ANSI_GRAY}[calling ${name}(${JSON.stringify(args)})]${ANSI_RESET}
+`);
+      atLineStart = true;
+      spinner.start();
     });
+    spinner.stop();
     console.log(`
 `);
     state.messages.push({ role: "assistant", content: reply });
   } catch (err) {
+    spinner.stop();
     console.error(`
 [error] ${err.message}`);
     state.messages.pop();

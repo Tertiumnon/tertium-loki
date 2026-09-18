@@ -307,6 +307,24 @@ model can never escape the workspace root or touch forbidden paths, even if it t
 If `autoApprove` is `false` (or omitted, default), write/delete operations prompt in
 chat before executing: `Approve write_file(...)? (y/N):`.
 
+```
+You (coder): /init
+Created /path/to/your-project/.loki/settings.yml
+Edit allowedGlobs/deniedGlobs/autoApprove to control what agents can read/write here.
+
+You (coder): create a haiku.txt file with a haiku about local LLMs
+coder:
+[calling write_file({"path":"haiku.txt","content":"Local models hum\nNo cloud, no key, just silence\nTokens flow offline"})]
+
+Approve Write 54 chars to haiku.txt? (y/N): y
+Created haiku.txt for you.
+```
+
+Declining (`n`, or just Enter) cancels that one call — the tool returns
+`Cancelled by user.` to the model instead of touching the file, and the
+conversation continues normally. With `autoApprove: true` the same exchange
+skips the prompt entirely and applies the write immediately.
+
 ## How it works
 
 `loki` talks directly to whichever backend's native HTTP API you picked at
