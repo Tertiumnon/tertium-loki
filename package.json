@@ -37,7 +37,7 @@
     "node": ">=18.17"
   },
   "dependencies": {
-    "@tertium/js": "^2.9.0",
+    "@tertium/js": "^3.0.0",
     "minimatch": "^9.0.3"
   },
   "devDependencies": {
