@@ -149,7 +149,7 @@ echo
 echo "== systemd service =="
 SERVICE_NAME="$(ask "systemd service name" "llama-server")"
 
-SERVER_ARGS=(--host 0.0.0.0 --port "$PORT" -c "$CTX_SIZE" --models-max "$MODELS_MAX" --sleep-idle-seconds "$SLEEP_IDLE")
+SERVER_ARGS=(--host 0.0.0.0 --port "$PORT" --jinja -c "$CTX_SIZE" --models-max "$MODELS_MAX" --sleep-idle-seconds "$SLEEP_IDLE")
 if [[ "$GPU_AVAILABLE" == true ]]; then
   SERVER_ARGS+=(-ngl 999)
 fi

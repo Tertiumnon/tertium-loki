@@ -1,7 +1,30 @@
 export const OPEN_METEO_GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search";
 export const OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
 
-export const FETCH_URL_MAX_CHARS = 4000;
+export const FETCH_URL_MAX_CHARS = 8000;
+export const FETCH_URL_TIMEOUT_MS = 20_000;
+// Below this much extracted text the page is almost certainly a JS shell or bot challenge.
+export const FETCH_URL_MIN_USEFUL_CHARS = 200;
+
+// www/old/new/np.reddit.com HTML pages serve a JS bot challenge to non-browsers,
+// but the same path with ".rss" appended returns the post + comments as Atom XML.
+export const REDDIT_HOST_PATTERN = /^(?:www\.|old\.|new\.|np\.)?reddit\.com$/i;
+
+export const HTML_ENTITIES: Record<string, string> = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  mdash: "—",
+  ndash: "–",
+  hellip: "…",
+  rsquo: "’",
+  lsquo: "‘",
+  rdquo: "”",
+  ldquo: "“",
+};
 export const USER_AGENT = "loki-cli (+https://github.com/Tertiumnon/tertium-loki)";
 
 // WMO weather interpretation codes, as returned by Open-Meteo's `weather_code` field.

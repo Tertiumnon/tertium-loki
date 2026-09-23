@@ -1,4 +1,6 @@
 import type { ChatMessage, ModelInfo, ToolDefinition } from "../llm-client/llm-client.types";
+import { holdBackPossibleToolCall, parseTextToolCall } from "../llm-client/text-tool-call";
+import { formatToolResult } from "../llm-client/tool-result";
 import type {
   OpenAIModelEntry,
   OpenAIModelsResponse,
@@ -10,6 +12,7 @@ import type {
 } from "./llamacpp-client.types";
 
 const MAX_TOOL_ROUNDS = 5;
+const MAX_TOOL_CALLS_PER_TURN = 1;
 
 const PARAM_SIZE_FROM_NAME = /(\d+(?:\.\d+)?)\s*[Bb](?![a-zA-Z])/;
 
@@ -65,6 +68,23 @@ export async function checkConnection(baseUrl: string): Promise<void> {
   await listModels(baseUrl);
 }
 
+/** llama-server explains most failures in the body ("tools param requires --jinja flag",
+ *  context overflow, unknown model, ...) — surface that instead of just "500 Internal Server Error". */
+async function errorDetail(res: Response): Promise<string> {
+  const text = await res.text().catch(() => "");
+  if (!text) return "";
+  try {
+    const parsed = JSON.parse(text) as { error?: string | { message?: string } };
+    const message = typeof parsed.error === "string" ? parsed.error : parsed.error?.message;
+    return message ? ` — ${message}` : ` — ${text.slice(0, 300)}`;
+  } catch {
+    return ` — ${text.slice(0, 300)}`;
+  }
+}
+
+/** An error reported by llama-server inside an already-open stream (as opposed to an HTTP failure). */
+class StreamError extends Error {}
+
 interface StreamedTurn {
   content: string;
   toolCalls: ToolCall[];
@@ -74,7 +94,7 @@ function applyToolCallDelta(byIndex: Map<number, ToolCall>, delta: StreamToolCal
   const existing = byIndex.get(delta.index);
   if (!existing) {
     byIndex.set(delta.index, {
-      id: delta.id ?? `call_${delta.index}`,
+      id: delta.id ?? "",
       type: "function",
       function: {
         name: delta.function?.name ?? "",
@@ -99,11 +119,18 @@ async function streamChat(
   const res = await fetch(`${baseUrl}/v1/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, stream: true, ...(tools?.length ? { tools } : {}) }),
+    // One call per turn: with parallel calls allowed, small models (seen with Qwen2.5-7B) can
+    // degenerate into emitting the same call over and over until the context fills.
+    body: JSON.stringify({
+      model,
+      messages,
+      stream: true,
+      ...(tools?.length ? { tools, parallel_tool_calls: false } : {}),
+    }),
   });
 
   if (!res.ok || !res.body) {
-    throw new Error(`POST /v1/chat/completions failed: ${res.status} ${res.statusText}`);
+    throw new Error(`POST /v1/chat/completions failed: ${res.status} ${res.statusText}${await errorDetail(res)}`);
   }
 
   const reader = res.body.getReader();
@@ -119,7 +146,9 @@ async function streamChat(
 
     const parsed = JSON.parse(payload) as StreamChunk;
     if (parsed.error) {
-      throw new Error(typeof parsed.error === "string" ? parsed.error : (parsed.error.message ?? "unknown error"));
+      throw new StreamError(
+        typeof parsed.error === "string" ? parsed.error : (parsed.error.message ?? "unknown error"),
+      );
     }
 
     const delta = parsed.choices?.[0]?.delta;
@@ -135,7 +164,11 @@ async function streamChat(
     }
   };
 
-  while (true) {
+  // Some builds ignore parallel_tool_calls: false, and a degenerate model then streams dozens of
+  // identical calls. Once a call past the cap starts, stop reading — cancelling the stream also
+  // makes llama-server stop generating instead of burning the rest of the context.
+  let runaway = false;
+  while (!runaway) {
     const { done, value } = await reader.read();
     if (done) break;
     buffer += decoder.decode(value, { stream: true });
@@ -145,15 +178,29 @@ async function streamChat(
       const line = buffer.slice(0, newlineIndex).trim();
       buffer = buffer.slice(newlineIndex + 1);
       if (line) processLine(line);
+      if (toolCallsByIndex.size > MAX_TOOL_CALLS_PER_TURN) {
+        runaway = true;
+        break;
+      }
       newlineIndex = buffer.indexOf("\n");
     }
   }
-  if (buffer.trim()) processLine(buffer.trim());
+  if (runaway) {
+    await reader.cancel().catch(() => {});
+  } else if (buffer.trim()) {
+    processLine(buffer.trim());
+  }
 
-  return {
-    content,
-    toolCalls: [...toolCallsByIndex.values()].filter((tc) => tc.function.name),
-  };
+  // Drop the partial call that tripped the cap, and collapse identical calls within the turn.
+  const seen = new Set<string>();
+  const toolCalls = [...toolCallsByIndex.values()].slice(0, MAX_TOOL_CALLS_PER_TURN).filter((tc) => {
+    const key = `${tc.function.name}:${tc.function.arguments}`;
+    if (!tc.function.name || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
+  return { content, toolCalls };
 }
 
 /**
@@ -168,6 +215,37 @@ export async function chatStream(
 ): Promise<string> {
   const { content } = await streamChat(baseUrl, model, messages, onToken);
   return content;
+}
+
+/**
+ * With tools attached, llama-server parses the model's output against the chat template's tool-call
+ * grammar and aborts the stream when it doesn't fit ("does not match the expected ... format") —
+ * typically a small model trying to call a tool that wasn't offered. If that happens before any text
+ * reached the user, retry the turn once without tools so the model answers in plain text instead.
+ */
+async function streamTurnWithTools(
+  baseUrl: string,
+  model: string,
+  history: WireMessage[],
+  onToken: (token: string) => void,
+  tools: OpenAITool[],
+): Promise<StreamedTurn> {
+  let streamedText = false;
+  try {
+    return await streamChat(
+      baseUrl,
+      model,
+      history,
+      (token) => {
+        streamedText = true;
+        onToken(token);
+      },
+      tools,
+    );
+  } catch (err) {
+    if (!(err instanceof StreamError) || streamedText) throw err;
+    return streamChat(baseUrl, model, history, onToken);
+  }
 }
 
 function parseToolArguments(raw: string): Record<string, unknown> {
@@ -199,32 +277,67 @@ export async function chatWithTools(
   }));
   const toolByName = new Map(tools.map((t) => [t.name, t]));
   const history: WireMessage[] = [...messages];
+  // Small models often repeat the exact same call; re-running it wastes a round and the
+  // network, so a repeat just gets the earlier result back with a nudge to answer.
+  const resultsByCall = new Map<string, string>();
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const { content, toolCalls } = await streamChat(baseUrl, model, history, onToken, openaiTools);
+    const display = holdBackPossibleToolCall(onToken);
+    const turn = await streamTurnWithTools(baseUrl, model, history, display.onToken, openaiTools);
+    let { content } = turn;
+    const { toolCalls } = turn;
 
     if (toolCalls.length === 0) {
-      return content;
+      const textCall = parseTextToolCall(content, new Set(toolByName.keys()));
+      if (!textCall) {
+        display.flush();
+        return content;
+      }
+      toolCalls.push({
+        id: "",
+        type: "function",
+        function: { name: textCall.name, arguments: JSON.stringify(textCall.args) },
+      });
+      content = "";
     }
 
+    // Some templates stream tool calls without an id; ids must still be unique across the whole history.
+    toolCalls.forEach((call, i) => {
+      if (!call.id) call.id = `call_${round}_${i}`;
+    });
     history.push({ role: "assistant", content, tool_calls: toolCalls });
 
     for (const call of toolCalls) {
       const tool = toolByName.get(call.function.name);
       const args = parseToolArguments(call.function.arguments);
+      const key = `${call.function.name}:${JSON.stringify(args)}`;
+      const previous = resultsByCall.get(key);
       onToolCall?.(call.function.name, args);
 
-      const result = tool
-        ? await tool.execute(args).catch((err: unknown) => `Error: ${(err as Error).message}`)
-        : `Error: unknown tool "${call.function.name}"`;
+      let result: string;
+      if (previous !== undefined) {
+        result = `${previous}\n\n(You already called ${call.function.name} with these arguments — use this result instead of calling it again.)`;
+      } else {
+        result = tool
+          ? await tool.execute(args).catch((err: unknown) => `Error: ${(err as Error).message}`)
+          : `Error: unknown tool "${call.function.name}". Available tools: ${[...toolByName.keys()].join(", ")}`;
+        resultsByCall.set(key, result);
+      }
 
       history.push({
         role: "tool",
         tool_call_id: call.id,
-        content: `Result: ${result}\n\nAnswer the user's question directly using this result. Do not describe that you called a tool.`,
+        content: formatToolResult(call.function.name, result),
       });
     }
+
+    if (toolCalls.some((call) => toolByName.get(call.function.name)?.answerAfter)) break;
   }
+
+  // A one-shot lookup ran, or tool rounds ran out: ask once more with tools withheld, so the model
+  // has to answer from what it gathered.
+  const { content } = await streamChat(baseUrl, model, history, onToken);
+  if (content.trim()) return content;
 
   const fallback = "(stopped after too many tool calls without a final answer)";
   onToken(fallback);

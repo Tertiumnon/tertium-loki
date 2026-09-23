@@ -8,7 +8,15 @@ import { runSetupWizard } from "../setup-wizard/setup-wizard";
 import { BUILTIN_TOOLS } from "../web-tools/web-tools";
 import { createFileTools, initWorkspaceConfig, loadWorkspaceConfig } from "../workspace/workspace";
 import type { PendingApproval } from "../workspace/workspace.types";
-import { ANSI_BLUE, ANSI_GRAY, ANSI_RESET, SPINNER_FRAMES, SPINNER_INTERVAL_MS } from "./chat-loop.constants";
+import {
+  ANSI_BLUE,
+  ANSI_GRAY,
+  ANSI_RESET,
+  BASE_SYSTEM_PROMPT,
+  SPINNER_FRAMES,
+  SPINNER_INTERVAL_MS,
+  URL_IN_TEXT,
+} from "./chat-loop.constants";
 import type { ChatState, CommandHandler, CommandResult, Readline } from "./chat-loop.types";
 
 interface Spinner {
@@ -136,7 +144,7 @@ async function dispatchCommand(rl: Readline, state: ChatState, input: string): P
 }
 
 function buildSystemPrompt(state: ChatState): string {
-  const parts: string[] = [];
+  const parts: string[] = [BASE_SYSTEM_PROMPT.replace("{date}", new Date().toISOString().slice(0, 10))];
 
   if (state.agentsGuide) {
     parts.push(state.agentsGuide);
@@ -149,6 +157,13 @@ function buildSystemPrompt(state: ChatState): string {
   return parts.join("\n\n");
 }
 
+/** fetch_url is only offered once the user has actually shared a link. Llama 3.1 in particular
+ *  reaches for any tool it's given, inventing e.g. a Wikipedia URL for "what is a mutex?". */
+export function availableBuiltinTools(messages: ChatMessage[]): ToolDefinition[] {
+  const userSharedUrl = messages.some((m) => m.role === "user" && URL_IN_TEXT.test(m.content));
+  return BUILTIN_TOOLS.filter((t) => t.name !== "fetch_url" || userSharedUrl);
+}
+
 async function sendMessage(state: ChatState, content: string, rl: Readline): Promise<void> {
   state.messages.push({ role: "user", content });
 
@@ -157,7 +172,7 @@ async function sendMessage(state: ChatState, content: string, rl: Readline): Pro
     ? [{ role: "system", content: systemPrompt }, ...state.messages]
     : state.messages;
 
-  let allTools: ToolDefinition[] = [...BUILTIN_TOOLS];
+  let allTools: ToolDefinition[] = availableBuiltinTools(state.messages);
 
   if (state.workspaceConfig) {
     const approvalHandler = async (approval: PendingApproval): Promise<boolean> => {

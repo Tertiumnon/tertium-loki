@@ -23,4 +23,9 @@ export interface ToolDefinition {
   description: string;
   parameters: Record<string, unknown>;
   execute: (args: Record<string, unknown>) => Promise<string>;
+  /** A one-shot lookup (fetch_url, get_weather): once it has run, the next request goes out without
+   *  tools so the model must answer. Small models otherwise keep calling tools as long as any are
+   *  offered — re-fetching the same page, then get_weather for a place the page mentions. Leave unset
+   *  for tools that legitimately chain (list_files → read_file → write_file). */
+  answerAfter?: boolean;
 }

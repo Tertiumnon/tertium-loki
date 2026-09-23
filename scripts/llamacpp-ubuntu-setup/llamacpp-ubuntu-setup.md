@@ -74,6 +74,13 @@ sudo systemctl enable --now ollama
 
 ## Notes
 
+- The service is started with `--jinja`, which loki's tool-calling (`fetch_url`,
+  `get_weather`, file tools) needs. If you set up `llama-server` by hand, pass it
+  too — without it, requests that include tools fail or the model only describes
+  the call in plain text. Existing installs from an older version of this script:
+  add `--jinja` to `ExecStart` in `/etc/systemd/system/<service>.service`, then
+  `sudo systemctl daemon-reload && sudo systemctl restart <service>`.
+
 - Only NVIDIA/CUDA is automated. If a non-NVIDIA GPU (AMD/Intel) is detected, the
   script says so and falls back to a CPU-only build — llama.cpp does support
   ROCm/HIP and SYCL/Vulkan, but setting those toolchains up isn't covered here.

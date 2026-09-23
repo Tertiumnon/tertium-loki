@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { commands } from "./chat-loop";
+import { availableBuiltinTools, commands } from "./chat-loop";
 import type { ChatState, Readline } from "./chat-loop.types";
 
 const originalFetch = globalThis.fetch;
@@ -135,5 +135,23 @@ describe("/models", () => {
 
     const result = await commands["/models"](noRl, makeState(), "");
     expect(result).toBe("continue");
+  });
+});
+
+describe("availableBuiltinTools", () => {
+  test("withholds fetch_url until the user has shared a link", () => {
+    const names = (content: string) => availableBuiltinTools([{ role: "user", content }]).map((t) => t.name);
+    expect(names("what is a mutex?")).toEqual(["get_weather"]);
+    expect(names("summarize https://example.com/post")).toContain("fetch_url");
+  });
+});
+
+describe("availableBuiltinTools link detection", () => {
+  test("recognises links pasted without a scheme, but not ordinary sentences", () => {
+    const hasFetch = (content: string) =>
+      availableBuiltinTools([{ role: "user", content }]).some((t) => t.name === "fetch_url");
+    expect(hasFetch("summarize habr.com/ru/articles/1085868/")).toBe(true);
+    expect(hasFetch("what's on www.example.com")).toBe(true);
+    expect(hasFetch("I use Node.js. Is that ok?")).toBe(false);
   });
 });

@@ -370,7 +370,7 @@ var package_default = {
     node: ">=18.17"
   },
   dependencies: {
-    "@tertium/js": "^2.9.0",
+    "@tertium/js": "^3.0.0",
     minimatch: "^9.0.3"
   },
   devDependencies: {
@@ -412,7 +412,109 @@ __export(exports_llamacpp_client, {
   listModels: () => listModels,
   listModelsDetailed: () => listModelsDetailed
 });
+
+// src/llm-client/text-tool-call.ts
+var WRAPPERS = [
+  /^<(tool_call|tools|tool|function_call|json)>\s*([\s\S]*?)\s*<\/\1>$/i,
+  /^```(?:json)?\s*([\s\S]*?)\s*```$/i
+];
+var CALL_OPENERS = [
+  "{",
+  "<tool_call>",
+  "<tools>",
+  "<tool>",
+  "<json>",
+  "<function_call>",
+  "```json",
+  "```\n{",
+  "```{"
+];
+function mightBeTextToolCall(content) {
+  const start = content.trimStart().toLowerCase();
+  return CALL_OPENERS.some((opener) => opener.startsWith(start) || start.startsWith(opener));
+}
+function parseTextToolCall(content, toolNames) {
+  let body = content.trim();
+  for (const wrapper of WRAPPERS) {
+    const match = wrapper.exec(body);
+    if (match)
+      body = match[match.length - 1];
+  }
+  const whole = toToolCall(tryParseJson(body), toolNames);
+  if (whole)
+    return whole;
+  const tail = content.trim().replace(/(<\/[a-z_]+>|```)\s*$/i, "").trimEnd();
+  if (!tail.endsWith("}"))
+    return;
+  for (let i = tail.lastIndexOf("{");i >= 0; i = i > 0 ? tail.lastIndexOf("{", i - 1) : -1) {
+    const call = toToolCall(tryParseJson(tail.slice(i)), toolNames);
+    if (call)
+      return call;
+  }
+  return;
+}
+function tryParseJson(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return;
+  }
+}
+function toToolCall(parsed, toolNames) {
+  if (typeof parsed !== "object" || parsed === null)
+    return;
+  const { name, arguments: rawArgs, parameters } = parsed;
+  if (typeof name !== "string" || !toolNames.has(name))
+    return;
+  const args = rawArgs ?? parameters ?? {};
+  if (typeof args === "string") {
+    try {
+      return { name, args: JSON.parse(args) };
+    } catch {
+      return;
+    }
+  }
+  return typeof args === "object" && args !== null ? { name, args } : undefined;
+}
+function holdBackPossibleToolCall(onToken) {
+  let held = "";
+  let holding = true;
+  return {
+    onToken(token) {
+      if (!holding) {
+        onToken(token);
+        return;
+      }
+      held += token;
+      if (!mightBeTextToolCall(held)) {
+        holding = false;
+        onToken(held);
+        held = "";
+      }
+    },
+    flush() {
+      if (held)
+        onToken(held);
+      held = "";
+      holding = false;
+    }
+  };
+}
+
+// src/llm-client/tool-result.ts
+function formatToolResult(toolName, result) {
+  if (result.startsWith("Error:")) {
+    const reason = result.slice("Error:".length).trim();
+    return `The ${toolName} tool failed: ${reason}. Tell the user briefly, in your own words, that it didn't work and why. Do not make up the missing information.`;
+  }
+  return `${result}
+
+(Tool output above. Use it to answer the user's original request in your own words — don't quote it verbatim or mention the tool.)`;
+}
+
+// src/llamacpp-client/llamacpp-client.ts
 var MAX_TOOL_ROUNDS = 5;
+var MAX_TOOL_CALLS_PER_TURN = 1;
 var PARAM_SIZE_FROM_NAME = /(\d+(?:\.\d+)?)\s*[Bb](?![a-zA-Z])/;
 function formatParamSize(nParams) {
   const billions = nParams / 1e9;
@@ -448,11 +550,26 @@ async function listModels(baseUrl) {
 async function checkConnection(baseUrl) {
   await listModels(baseUrl);
 }
+async function errorDetail(res) {
+  const text = await res.text().catch(() => "");
+  if (!text)
+    return "";
+  try {
+    const parsed = JSON.parse(text);
+    const message = typeof parsed.error === "string" ? parsed.error : parsed.error?.message;
+    return message ? ` — ${message}` : ` — ${text.slice(0, 300)}`;
+  } catch {
+    return ` — ${text.slice(0, 300)}`;
+  }
+}
+
+class StreamError extends Error {
+}
 function applyToolCallDelta(byIndex, delta) {
   const existing = byIndex.get(delta.index);
   if (!existing) {
     byIndex.set(delta.index, {
-      id: delta.id ?? `call_${delta.index}`,
+      id: delta.id ?? "",
       type: "function",
       function: {
         name: delta.function?.name ?? "",
@@ -472,10 +589,15 @@ async function streamChat(baseUrl, model, messages, onToken, tools) {
   const res = await fetch(`${baseUrl}/v1/chat/completions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, messages, stream: true, ...tools?.length ? { tools } : {} })
+    body: JSON.stringify({
+      model,
+      messages,
+      stream: true,
+      ...tools?.length ? { tools, parallel_tool_calls: false } : {}
+    })
   });
   if (!res.ok || !res.body) {
-    throw new Error(`POST /v1/chat/completions failed: ${res.status} ${res.statusText}`);
+    throw new Error(`POST /v1/chat/completions failed: ${res.status} ${res.statusText}${await errorDetail(res)}`);
   }
   const reader = res.body.getReader();
   const decoder = new TextDecoder;
@@ -490,7 +612,7 @@ async function streamChat(baseUrl, model, messages, onToken, tools) {
       return;
     const parsed = JSON.parse(payload);
     if (parsed.error) {
-      throw new Error(typeof parsed.error === "string" ? parsed.error : parsed.error.message ?? "unknown error");
+      throw new StreamError(typeof parsed.error === "string" ? parsed.error : parsed.error.message ?? "unknown error");
     }
     const delta = parsed.choices?.[0]?.delta;
     if (!delta)
@@ -503,7 +625,8 @@ async function streamChat(baseUrl, model, messages, onToken, tools) {
       applyToolCallDelta(toolCallsByIndex, tc);
     }
   };
-  while (true) {
+  let runaway = false;
+  while (!runaway) {
     const { done, value } = await reader.read();
     if (done)
       break;
@@ -515,20 +638,45 @@ async function streamChat(baseUrl, model, messages, onToken, tools) {
       buffer = buffer.slice(newlineIndex + 1);
       if (line)
         processLine(line);
+      if (toolCallsByIndex.size > MAX_TOOL_CALLS_PER_TURN) {
+        runaway = true;
+        break;
+      }
       newlineIndex = buffer.indexOf(`
 `);
     }
   }
-  if (buffer.trim())
+  if (runaway) {
+    await reader.cancel().catch(() => {});
+  } else if (buffer.trim()) {
     processLine(buffer.trim());
-  return {
-    content,
-    toolCalls: [...toolCallsByIndex.values()].filter((tc) => tc.function.name)
-  };
+  }
+  const seen = new Set;
+  const toolCalls = [...toolCallsByIndex.values()].slice(0, MAX_TOOL_CALLS_PER_TURN).filter((tc) => {
+    const key = `${tc.function.name}:${tc.function.arguments}`;
+    if (!tc.function.name || seen.has(key))
+      return false;
+    seen.add(key);
+    return true;
+  });
+  return { content, toolCalls };
 }
 async function chatStream(baseUrl, model, messages, onToken) {
   const { content } = await streamChat(baseUrl, model, messages, onToken);
   return content;
+}
+async function streamTurnWithTools(baseUrl, model, history, onToken, tools) {
+  let streamedText = false;
+  try {
+    return await streamChat(baseUrl, model, history, (token) => {
+      streamedText = true;
+      onToken(token);
+    }, tools);
+  } catch (err) {
+    if (!(err instanceof StreamError) || streamedText)
+      throw err;
+    return streamChat(baseUrl, model, history, onToken);
+  }
 }
 function parseToolArguments(raw) {
   try {
@@ -544,27 +692,60 @@ async function chatWithTools(baseUrl, model, messages, tools, onToken, onToolCal
   }));
   const toolByName = new Map(tools.map((t) => [t.name, t]));
   const history = [...messages];
+  const resultsByCall = new Map;
   for (let round = 0;round < MAX_TOOL_ROUNDS; round++) {
-    const { content, toolCalls } = await streamChat(baseUrl, model, history, onToken, openaiTools);
+    const display = holdBackPossibleToolCall(onToken);
+    const turn = await streamTurnWithTools(baseUrl, model, history, display.onToken, openaiTools);
+    let { content } = turn;
+    const { toolCalls } = turn;
     if (toolCalls.length === 0) {
-      return content;
+      const textCall = parseTextToolCall(content, new Set(toolByName.keys()));
+      if (!textCall) {
+        display.flush();
+        return content;
+      }
+      toolCalls.push({
+        id: "",
+        type: "function",
+        function: { name: textCall.name, arguments: JSON.stringify(textCall.args) }
+      });
+      content = "";
     }
+    toolCalls.forEach((call, i) => {
+      if (!call.id)
+        call.id = `call_${round}_${i}`;
+    });
     history.push({ role: "assistant", content, tool_calls: toolCalls });
     for (const call of toolCalls) {
       const tool = toolByName.get(call.function.name);
       const args = parseToolArguments(call.function.arguments);
+      const key = `${call.function.name}:${JSON.stringify(args)}`;
+      const previous = resultsByCall.get(key);
       onToolCall?.(call.function.name, args);
-      const result = tool ? await tool.execute(args).catch((err) => `Error: ${err.message}`) : `Error: unknown tool "${call.function.name}"`;
+      let result;
+      if (previous !== undefined) {
+        result = `${previous}
+
+(You already called ${call.function.name} with these arguments — use this result instead of calling it again.)`;
+      } else {
+        result = tool ? await tool.execute(args).catch((err) => `Error: ${err.message}`) : `Error: unknown tool "${call.function.name}". Available tools: ${[...toolByName.keys()].join(", ")}`;
+        resultsByCall.set(key, result);
+      }
       history.push({
         role: "tool",
         tool_call_id: call.id,
-        content: `Result: ${result}
-
-Answer the user's question directly using this result. Do not describe that you called a tool.`
+        content: formatToolResult(call.function.name, result)
       });
     }
+    if (toolCalls.some((call) => toolByName.get(call.function.name)?.answerAfter))
+      break;
   }
-  return "(stopped after too many tool calls without a final answer)";
+  const { content } = await streamChat(baseUrl, model, history, onToken);
+  if (content.trim())
+    return content;
+  const fallback = "(stopped after too many tool calls without a final answer)";
+  onToken(fallback);
+  return fallback;
 }
 
 // src/ollama-client/ollama-client.ts
@@ -662,27 +843,52 @@ async function chatWithTools2(baseUrl, model, messages, tools, onToken, onToolCa
   }));
   const toolByName = new Map(tools.map((t) => [t.name, t]));
   const history = [...messages];
+  const resultsByCall = new Map;
   for (let round = 0;round < MAX_TOOL_ROUNDS2; round++) {
-    const { content, toolCalls } = await streamChat2(baseUrl, model, history, onToken, ollamaTools);
+    const display = holdBackPossibleToolCall(onToken);
+    const turn = await streamChat2(baseUrl, model, history, display.onToken, ollamaTools);
+    let { content } = turn;
+    const { toolCalls } = turn;
     if (toolCalls.length === 0) {
-      return content;
+      const textCall = parseTextToolCall(content, new Set(toolByName.keys()));
+      if (!textCall) {
+        display.flush();
+        return content;
+      }
+      toolCalls.push({ function: { name: textCall.name, arguments: textCall.args } });
+      content = "";
     }
     history.push({ role: "assistant", content, tool_calls: toolCalls });
     for (const call of toolCalls) {
       const tool = toolByName.get(call.function.name);
       const args = parseToolArguments2(call.function.arguments);
+      const key = `${call.function.name}:${JSON.stringify(args)}`;
+      const previous = resultsByCall.get(key);
       onToolCall?.(call.function.name, args);
-      const result = tool ? await tool.execute(args).catch((err) => `Error: ${err.message}`) : `Error: unknown tool "${call.function.name}"`;
+      let result;
+      if (previous !== undefined) {
+        result = `${previous}
+
+(You already called ${call.function.name} with these arguments — use this result instead of calling it again.)`;
+      } else {
+        result = tool ? await tool.execute(args).catch((err) => `Error: ${err.message}`) : `Error: unknown tool "${call.function.name}". Available tools: ${[...toolByName.keys()].join(", ")}`;
+        resultsByCall.set(key, result);
+      }
       history.push({
         role: "tool",
-        content: `Result: ${result}
-
-Answer the user's question directly using this result. Do not describe that you called a tool.`,
+        content: formatToolResult(call.function.name, result),
         tool_name: call.function.name
       });
     }
+    if (toolCalls.some((call) => toolByName.get(call.function.name)?.answerAfter))
+      break;
   }
-  return "(stopped after too many tool calls without a final answer)";
+  const { content } = await streamChat2(baseUrl, model, history, onToken);
+  if (content.trim())
+    return content;
+  const fallback = "(stopped after too many tool calls without a final answer)";
+  onToken(fallback);
+  return fallback;
 }
 
 // src/llm-client/llm-client.ts
@@ -916,7 +1122,25 @@ Saved config to ${getConfigPath(configDir)}`);
 // src/web-tools/web-tools.constants.ts
 var OPEN_METEO_GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search";
 var OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast";
-var FETCH_URL_MAX_CHARS = 4000;
+var FETCH_URL_MAX_CHARS = 8000;
+var FETCH_URL_TIMEOUT_MS = 20000;
+var FETCH_URL_MIN_USEFUL_CHARS = 200;
+var REDDIT_HOST_PATTERN = /^(?:www\.|old\.|new\.|np\.)?reddit\.com$/i;
+var HTML_ENTITIES = {
+  amp: "&",
+  lt: "<",
+  gt: ">",
+  quot: '"',
+  apos: "'",
+  nbsp: " ",
+  mdash: "—",
+  ndash: "–",
+  hellip: "…",
+  rsquo: "’",
+  lsquo: "‘",
+  rdquo: "”",
+  ldquo: "“"
+};
 var USER_AGENT = "loki-cli (+https://github.com/Tertiumnon/tertium-loki)";
 var WMO_WEATHER_DESCRIPTIONS = {
   0: "Clear sky",
@@ -983,19 +1207,84 @@ async function getWeather(location) {
   const where = [place.name, place.country].filter(Boolean).join(", ");
   return `Current weather in ${where}: ${description}, ${weather.temperatureC}°C, wind ${weather.windSpeedKph} km/h.`;
 }
-async function fetchUrl(url) {
-  const res = await fetch(url, { headers: { "User-Agent": USER_AGENT } });
-  if (!res.ok) {
-    throw new Error(`Fetching ${url} failed: ${res.status} ${res.statusText}`);
+function decodeEntities(text) {
+  return text.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, code) => {
+    if (code[0] === "#") {
+      const hex = code[1] === "x" || code[1] === "X";
+      const n = Number.parseInt(code.slice(hex ? 2 : 1), hex ? 16 : 10);
+      return n >= 0 && n <= 1114111 ? String.fromCodePoint(n) : match;
+    }
+    return HTML_ENTITIES[code.toLowerCase()] ?? match;
+  });
+}
+function htmlToText(html) {
+  const withoutNoise = html.replace(/<!--[\s\S]*?-->/g, " ").replace(/<(script|style|noscript|svg|template|nav|header|footer|aside|form)\b[\s\S]*?<\/\1>/gi, " ");
+  const main = /<(article|main)\b[^>]*>([\s\S]*?)<\/\1>/i.exec(withoutNoise)?.[2];
+  const body = main && main.replace(/<[^>]+>/g, "").trim().length > 0 ? main : withoutNoise;
+  return decodeEntities(body.replace(/<(br|\/p|\/div|\/li|\/h[1-6])\b[^>]*>/gi, `
+`).replace(/<[^>]+>/g, " ")).replace(/[ \t\f\v\r]+/g, " ").replace(/ *\n[\s]*/g, `
+`).trim();
+}
+function feedToText(xml, isThread = false) {
+  const tag = (block, name) => new RegExp(`<${name}\\b[^>]*>([\\s\\S]*?)<\\/${name}>`, "i").exec(block)?.[1] ?? "";
+  const unwrap = (s) => s.replace(/^<!\[CDATA\[([\s\S]*)\]\]>$/, "$1");
+  const entries = [...xml.matchAll(/<(entry|item)\b[\s\S]*?<\/\1>/gi)].map(([block], i) => {
+    const title = htmlToText(decodeEntities(unwrap(tag(block, "title"))));
+    const author = htmlToText(tag(tag(block, "author"), "name") || tag(block, "author") || tag(block, "dc:creator"));
+    const body = htmlToText(decodeEntities(unwrap(tag(block, "content") || tag(block, "description"))));
+    const label = isThread ? i === 0 ? "ORIGINAL POST" : "COMMENT" : "";
+    return [label, title, author && `by ${author}`, body].filter(Boolean).join(`
+`);
+  });
+  return entries.length > 0 ? entries.join(`
+
+---
+
+`) : htmlToText(xml);
+}
+function rewriteForFetch(url) {
+  if (REDDIT_HOST_PATTERN.test(url.hostname) && !/\.(rss|json)$/i.test(url.pathname)) {
+    const rewritten = new URL(url);
+    rewritten.hostname = "www.reddit.com";
+    rewritten.pathname = `${url.pathname.replace(/\/+$/, "")}/.rss`;
+    return rewritten;
   }
-  const html = await res.text();
-  const text = html.replace(/<script[\s\S]*?<\/script>/gi, " ").replace(/<style[\s\S]*?<\/style>/gi, " ").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return url;
+}
+async function fetchUrl(rawUrl) {
+  let parsed;
+  try {
+    const trimmed = rawUrl.trim();
+    parsed = new URL(/^[a-z][a-z0-9+.-]*:/i.test(trimmed) ? trimmed : `https://${trimmed}`);
+  } catch {
+    throw new Error(`Not a valid URL: "${rawUrl}"`);
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new Error(`Only http(s) URLs can be fetched, got "${parsed.protocol}"`);
+  }
+  const target = rewriteForFetch(parsed).toString();
+  const res = await fetch(target, {
+    headers: { "User-Agent": USER_AGENT },
+    signal: AbortSignal.timeout(FETCH_URL_TIMEOUT_MS)
+  });
+  if (!res.ok) {
+    throw new Error(`Fetching ${target} failed: ${res.status} ${res.statusText}`);
+  }
+  const body = await res.text();
+  const contentType = res.headers.get("content-type") ?? "";
+  const isFeed = /xml|rss|atom/i.test(contentType) || /^\s*<\?xml[\s\S]{0,200}<(feed|rss)\b/i.test(body);
+  const isText = /^(text\/plain|application\/json)/i.test(contentType);
+  const isRedditThread = REDDIT_HOST_PATTERN.test(parsed.hostname) && /\/comments\//.test(parsed.pathname);
+  const text = isFeed ? feedToText(body, isRedditThread) : isText ? body.trim() : htmlToText(body);
+  if (text.length < FETCH_URL_MIN_USEFUL_CHARS) {
+    return `The page at ${target} returned almost no readable text (it likely requires JavaScript or blocks automated access). Extracted text: "${text}". Tell the user the page could not be read; do not guess its contents.`;
+  }
   return text.length > FETCH_URL_MAX_CHARS ? `${text.slice(0, FETCH_URL_MAX_CHARS)}…` : text;
 }
 var BUILTIN_TOOLS = [
   {
     name: "get_weather",
-    description: "Get the current weather for a named location (city, region, or place name).",
+    description: "Get the current weather for a named location. Only call this when the user explicitly asks about weather.",
     parameters: {
       type: "object",
       properties: {
@@ -1003,11 +1292,12 @@ var BUILTIN_TOOLS = [
       },
       required: ["location"]
     },
-    execute: (args) => getWeather(String(args.location ?? ""))
+    execute: (args) => getWeather(String(args.location ?? "")),
+    answerAfter: true
   },
   {
     name: "fetch_url",
-    description: "Fetch the readable text content of a specific web page URL.",
+    description: "Fetch the readable text content of a web page. Call this when the user gives a URL or asks about a specific page.",
     parameters: {
       type: "object",
       properties: {
@@ -1015,7 +1305,8 @@ var BUILTIN_TOOLS = [
       },
       required: ["url"]
     },
-    execute: (args) => fetchUrl(String(args.url ?? ""))
+    execute: (args) => fetchUrl(String(args.url ?? "")),
+    answerAfter: true
   }
 ];
 
@@ -2780,6 +3071,15 @@ function createFileTools(config, approvalHandler) {
 var ANSI_RESET = "\x1B[0m";
 var ANSI_GRAY = "\x1B[90m";
 var ANSI_BLUE = "\x1B[94m";
+var BASE_SYSTEM_PROMPT = `Today's date is {date}.
+Answer from your own knowledge by default — general questions, explanations, and code need no tools.
+Call a tool only when the request actually needs one:
+- If the user gives a URL, call fetch_url with that exact URL. Never invent URLs to look things up.
+- Only call get_weather when the user asks about the weather.
+- Never call a tool that is unrelated to the request, and never repeat a call with the same arguments.
+- If a tool returns an error or no useful content, tell the user plainly instead of guessing or calling other tools.
+After using tools, answer the user's actual request directly. Don't list or describe the tools you called.`;
+var URL_IN_TEXT = /\b(?:https?:\/\/\S+|www\.[^\s/]+\.[a-z]{2,}\S*|[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\/\S*)/i;
 var SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 var SPINNER_INTERVAL_MS = 80;
 
@@ -2891,7 +3191,7 @@ async function dispatchCommand(rl, state, input) {
   return handler ? handler(rl, state, rest.join(" ")) : undefined;
 }
 function buildSystemPrompt(state) {
-  const parts = [];
+  const parts = [BASE_SYSTEM_PROMPT.replace("{date}", new Date().toISOString().slice(0, 10))];
   if (state.agentsGuide) {
     parts.push(state.agentsGuide);
   }
@@ -2902,11 +3202,15 @@ function buildSystemPrompt(state) {
 
 `);
 }
+function availableBuiltinTools(messages) {
+  const userSharedUrl = messages.some((m) => m.role === "user" && URL_IN_TEXT.test(m.content));
+  return BUILTIN_TOOLS.filter((t) => t.name !== "fetch_url" || userSharedUrl);
+}
 async function sendMessage(state, content, rl) {
   state.messages.push({ role: "user", content });
   const systemPrompt = buildSystemPrompt(state);
   const outgoing = systemPrompt ? [{ role: "system", content: systemPrompt }, ...state.messages] : state.messages;
-  let allTools = [...BUILTIN_TOOLS];
+  let allTools = availableBuiltinTools(state.messages);
   if (state.workspaceConfig) {
     const approvalHandler = async (approval) => {
       const answer = await rl.question(`

@@ -1,4 +1,6 @@
 import type { ChatMessage, ModelInfo, ToolDefinition } from "../llm-client/llm-client.types";
+import { holdBackPossibleToolCall, parseTextToolCall } from "../llm-client/text-tool-call";
+import { formatToolResult } from "../llm-client/tool-result";
 import type {
   OllamaChatStreamChunk,
   OllamaTagsResponse,
@@ -144,12 +146,24 @@ export async function chatWithTools(
   }));
   const toolByName = new Map(tools.map((t) => [t.name, t]));
   const history: WireMessage[] = [...messages];
+  // Small models often repeat the exact same call; re-running it wastes a round and the
+  // network, so a repeat just gets the earlier result back with a nudge to answer.
+  const resultsByCall = new Map<string, string>();
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-    const { content, toolCalls } = await streamChat(baseUrl, model, history, onToken, ollamaTools);
+    const display = holdBackPossibleToolCall(onToken);
+    const turn = await streamChat(baseUrl, model, history, display.onToken, ollamaTools);
+    let { content } = turn;
+    const { toolCalls } = turn;
 
     if (toolCalls.length === 0) {
-      return content;
+      const textCall = parseTextToolCall(content, new Set(toolByName.keys()));
+      if (!textCall) {
+        display.flush();
+        return content;
+      }
+      toolCalls.push({ function: { name: textCall.name, arguments: textCall.args } });
+      content = "";
     }
 
     history.push({ role: "assistant", content, tool_calls: toolCalls });
@@ -157,19 +171,34 @@ export async function chatWithTools(
     for (const call of toolCalls) {
       const tool = toolByName.get(call.function.name);
       const args = parseToolArguments(call.function.arguments);
+      const key = `${call.function.name}:${JSON.stringify(args)}`;
+      const previous = resultsByCall.get(key);
       onToolCall?.(call.function.name, args);
 
-      const result = tool
-        ? await tool.execute(args).catch((err: unknown) => `Error: ${(err as Error).message}`)
-        : `Error: unknown tool "${call.function.name}"`;
+      let result: string;
+      if (previous !== undefined) {
+        result = `${previous}\n\n(You already called ${call.function.name} with these arguments — use this result instead of calling it again.)`;
+      } else {
+        result = tool
+          ? await tool.execute(args).catch((err: unknown) => `Error: ${(err as Error).message}`)
+          : `Error: unknown tool "${call.function.name}". Available tools: ${[...toolByName.keys()].join(", ")}`;
+        resultsByCall.set(key, result);
+      }
 
       history.push({
         role: "tool",
-        content: `Result: ${result}\n\nAnswer the user's question directly using this result. Do not describe that you called a tool.`,
+        content: formatToolResult(call.function.name, result),
         tool_name: call.function.name,
       });
     }
+
+    if (toolCalls.some((call) => toolByName.get(call.function.name)?.answerAfter)) break;
   }
+
+  // A one-shot lookup ran, or tool rounds ran out: ask once more with tools withheld, so the model
+  // has to answer from what it gathered.
+  const { content } = await streamChat(baseUrl, model, history, onToken);
+  if (content.trim()) return content;
 
   const fallback = "(stopped after too many tool calls without a final answer)";
   onToken(fallback);

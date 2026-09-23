@@ -164,8 +164,10 @@ You (coder): /exit
 
 ## Project Instructions (AGENTS.md)
 
-If an `AGENTS.md` file exists in the current directory, `loki` will load it and
-prepend its contents to every agent's system prompt. This lets you provide
+Every request starts with a short built-in system prompt (today's date and when
+to use tools). If an `AGENTS.md` file exists in the current directory, `loki`
+will load it and add its contents after that, ahead of every agent's own system
+prompt. This lets you provide
 project-specific context, conventions, or instructions that apply to all agents.
 
 Example `AGENTS.md`:
@@ -221,7 +223,17 @@ Code itself uses for `WebFetch`:
   [Open-Meteo](https://open-meteo.com) (free, no API key, built for
   programmatic access).
 - **`fetch_url(url)`** — fetches a specific page and returns its text (HTML
-  stripped), like Claude Code's `WebFetch`.
+  stripped, main content preferred over menus), like Claude Code's `WebFetch`.
+  Only offered once you've pasted a link, so models can't go browsing on their
+  own. Reddit links are read through the thread's `.rss` feed, since Reddit's
+  HTML pages serve a bot challenge to non-browsers. Pages that come back with
+  almost no text (JavaScript-only sites) are reported as unreadable instead of
+  being guessed at.
+
+Both are one-shot lookups: after one runs, loki asks the model for its answer
+with tools switched off. Small local models otherwise keep calling tools as long
+as any are offered — re-fetching the same page, then asking for the weather in
+a place the article mentions.
 
 ```
 You (general): what's the weather in Paris right now?
@@ -249,12 +261,19 @@ If you want open-ended search, add a tool backed by a paid/keyed search API in
   [function-calling docs](https://github.com/ggml-org/llama.cpp/blob/master/docs/function-calling.md)
   for which models are natively supported.
 - With the **Ollama** backend, tool-calling support can be inconsistent even on
-  models that advertise it — `llama3.1:8b` reliably used both tools correctly
-  in testing, while `qwen2.5-coder:7b` sometimes emitted the tool call as plain
-  text instead of a structured call.
+  models that advertise it.
+- Models whose template has no tool support (e.g. Qwen 2.5 Coder) write the call
+  as plain JSON text; loki recognises a reply that is — or ends with — a call to
+  a known tool and runs it anyway.
+- In testing against llama.cpp, Qwen2.5-7B-Instruct was the most disciplined
+  general model: it calls tools only when asked. Llama 3.1 8B works, but still
+  occasionally makes an unrelated call before answering.
 
-If a tool doesn't seem to fire, try `/agent general` (or whichever profile uses
-your strongest general-purpose model).
+loki also guards against the common small-model failure modes: one tool call
+per turn (some llama.cpp builds ignore `parallel_tool_calls: false`, letting a
+model repeat a call until the context fills), repeated identical calls reuse the
+earlier result, and a malformed tool call that llama-server rejects is retried
+as a plain answer.
 
 ### File Operations (Workspace)
 

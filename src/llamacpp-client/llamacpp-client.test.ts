@@ -179,4 +179,130 @@ describe("chatWithTools", () => {
     // The fallback must reach onToken too, or the terminal never shows it (nothing was streamed).
     expect(tokens.join("")).toContain("too many tool calls");
   });
+
+  test("after the last tool round, asks once more without tools to force an answer", async () => {
+    const toolsSent: boolean[] = [];
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { tools?: unknown[] };
+      toolsSent.push(Boolean(body.tools));
+      return body.tools
+        ? sseResponse(toolCallDeltas("", "loop", `{"n":${toolsSent.length}}`))
+        : sseResponse(contentDeltas("final answer"));
+    }) as unknown as typeof fetch;
+
+    const reply = await chatWithTools("http://localhost:9931", "test-model", [], [fakeTool("loop", "x")], () => {});
+    expect(reply).toBe("final answer");
+    expect(toolsSent.at(-1)).toBe(false);
+  });
+
+  test("reuses the earlier result for a repeated identical call and keeps tool-call ids unique", async () => {
+    let round = 0;
+    let executions = 0;
+    let lastMessages: Array<{ role: string; tool_call_id?: string; tool_calls?: Array<{ id: string }> }> = [];
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      round++;
+      lastMessages = (JSON.parse(String(init.body)) as { messages: typeof lastMessages }).messages;
+      if (round <= 2) return sseResponse(toolCallDeltas("", "get_weather", '{"location":"New York"}'));
+      return sseResponse(contentDeltas("done"));
+    }) as unknown as typeof fetch;
+
+    const tool: ToolDefinition = { ...fakeTool("get_weather", "Sunny"), execute: async () => `Sunny ${++executions}` };
+    await chatWithTools("http://localhost:9931", "test-model", [], [tool], () => {});
+
+    expect(executions).toBe(1);
+    const ids = lastMessages.filter((m) => m.role === "tool").map((m) => m.tool_call_id);
+    expect(new Set(ids).size).toBe(2);
+    expect(ids.every(Boolean)).toBe(true);
+  });
+
+  test("retries a turn without tools when llama-server rejects the model's tool-call output", async () => {
+    const toolsSent: boolean[] = [];
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { tools?: unknown[] };
+      toolsSent.push(Boolean(body.tools));
+      return body.tools
+        ? sseResponse([{ error: { message: "The model produced output that does not match the expected format" } }])
+        : sseResponse(contentDeltas("A mutex is a lock."));
+    }) as unknown as typeof fetch;
+
+    const reply = await chatWithTools("http://localhost:9931", "m", [], [fakeTool("get_weather", "")], () => {});
+    expect(reply).toBe("A mutex is a lock.");
+    expect(toolsSent).toEqual([true, false]);
+  });
+
+  test("includes llama-server's error message from the response body", async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ error: { message: "tools param requires --jinja flag" } }), {
+        status: 500,
+        statusText: "Internal Server Error",
+      })) as unknown as typeof fetch;
+    await expect(chatStream("http://localhost:9931", "m", [], () => {})).rejects.toThrow("requires --jinja");
+  });
+});
+
+describe("chatWithTools text-form tool calls", () => {
+  test("runs a tool call the model wrote as plain JSON text, without echoing the JSON", async () => {
+    let round = 0;
+    globalThis.fetch = (async () => {
+      round++;
+      return round === 1
+        ? sseResponse(
+            contentDeltas("<tools>\n", '{"name": "get_weather", "arguments": {"location": "Kyiv"}}', "\n</tools>"),
+          )
+        : sseResponse(contentDeltas("Overcast in Kyiv."));
+    }) as unknown as typeof fetch;
+
+    const tokens: string[] = [];
+    const calls: string[] = [];
+    const tool: ToolDefinition = {
+      name: "get_weather",
+      description: "",
+      parameters: {},
+      execute: async () => "Overcast",
+    };
+    const reply = await chatWithTools(
+      "http://localhost:9931",
+      "m",
+      [],
+      [tool],
+      (t) => tokens.push(t),
+      (name) => calls.push(name),
+    );
+    expect(calls).toEqual(["get_weather"]);
+    expect(reply).toBe("Overcast in Kyiv.");
+    expect(tokens.join("")).toBe("Overcast in Kyiv.");
+  });
+});
+
+describe("chatWithTools one-shot tools", () => {
+  test("after an answerAfter tool runs, the next request has no tools, so the model must answer", async () => {
+    const toolsSent: boolean[] = [];
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { tools?: unknown[] };
+      toolsSent.push(Boolean(body.tools));
+      return body.tools
+        ? sseResponse(toolCallDeltas("c1", "fetch_url", '{"url":"https://habr.com/ru/articles/1/"}'))
+        : sseResponse(contentDeltas("Summary."));
+    }) as unknown as typeof fetch;
+
+    const calls: string[] = [];
+    const fetchTool: ToolDefinition = {
+      name: "fetch_url",
+      description: "",
+      parameters: {},
+      execute: async () => "article text",
+      answerAfter: true,
+    };
+    const reply = await chatWithTools(
+      "http://localhost:9931",
+      "m",
+      [],
+      [fetchTool],
+      () => {},
+      (n) => calls.push(n),
+    );
+    expect(reply).toBe("Summary.");
+    expect(calls).toEqual(["fetch_url"]);
+    expect(toolsSent).toEqual([true, false]);
+  });
 });
