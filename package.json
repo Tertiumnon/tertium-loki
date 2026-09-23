@@ -1,6 +1,6 @@
 {
   "name": "@tertium/loki",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Terminal chat CLI for local llama.cpp models — Claude-Code-CLI style, Node/TypeScript",
   "author": "Vitalii Balabanov",
   "email": "tertiumnon@gmail.com",
