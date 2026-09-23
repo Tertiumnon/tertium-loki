@@ -347,9 +347,9 @@ var package_default = {
     lint: "biome check .",
     format: "biome format --write .",
     prepublishOnly: "bun run typecheck && bun run test && bun run build",
-    "release:patch": "bun node_modules/@tertium/js/scripts/release.js patch",
-    "release:minor": "bun node_modules/@tertium/js/scripts/release.js minor",
-    "release:major": "bun node_modules/@tertium/js/scripts/release.js major",
+    "release:patch": "bun node_modules/@tertium/js/scripts/release/release.ts patch",
+    "release:minor": "bun node_modules/@tertium/js/scripts/release/release.ts minor",
+    "release:major": "bun node_modules/@tertium/js/scripts/release/release.ts major",
     prepare: "git config core.hooksPath .githooks"
   },
   bin: {
