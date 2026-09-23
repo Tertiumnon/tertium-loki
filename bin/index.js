@@ -333,7 +333,7 @@ var require_brace_expansion = __commonJS(function(exports, module) {
 // package.json
 var package_default = {
   name: "@tertium/loki",
-  version: "0.1.0",
+  version: "0.2.0",
   description: "Terminal chat CLI for local llama.cpp models — Claude-Code-CLI style, Node/TypeScript",
   author: "Vitalii Balabanov",
   email: "tertiumnon@gmail.com",
@@ -347,6 +347,7 @@ var package_default = {
     lint: "biome check .",
     format: "biome format --write .",
     prepublishOnly: "bun run typecheck && bun run test && bun run build",
+    version: "bun run build && git add bin/index.js",
     "release:patch": "bun node_modules/@tertium/js/scripts/release/release.ts patch",
     "release:minor": "bun node_modules/@tertium/js/scripts/release/release.ts minor",
     "release:major": "bun node_modules/@tertium/js/scripts/release/release.ts major",

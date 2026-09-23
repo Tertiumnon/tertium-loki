@@ -14,6 +14,7 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "prepublishOnly": "bun run typecheck && bun run test && bun run build",
+    "version": "bun run build && git add bin/index.js",
     "release:patch": "bun node_modules/@tertium/js/scripts/release/release.ts patch",
     "release:minor": "bun node_modules/@tertium/js/scripts/release/release.ts minor",
     "release:major": "bun node_modules/@tertium/js/scripts/release/release.ts major",
